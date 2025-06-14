@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "pinboard": {
+      "command": "pinboard-mcp-server",
+      "args": ["--port", "8001"],
+      "env": {
+        "PINBOARD_TOKEN": "your-username:your-token-here"
+      }
+    }
+  }
+}

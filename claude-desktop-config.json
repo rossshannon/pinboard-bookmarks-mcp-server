@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "pinboard": {
+      "command": "pinboard-mcp-server",
+      "env": {
+        "PINBOARD_TOKEN": "your-username:your-token-here"
+      }
+    }
+  }
+}
