@@ -15,7 +15,7 @@ class TestBookmark:
             title="Test Bookmark",
             tags=["test", "example"],
             notes="Test notes",
-            saved_at=datetime.now()
+            saved_at=datetime.now(),
         )
 
         assert bookmark.url == "https://example.com"
@@ -31,7 +31,7 @@ class TestBookmark:
             "description": "Test Title",
             "extended": "Test notes here",
             "tags": "python testing",
-            "time": "2024-01-15T10:30:00Z"
+            "time": "2024-01-15T10:30:00Z",
         }
 
         bookmark = Bookmark.from_pinboard(pinboard_data)
@@ -51,7 +51,7 @@ class TestBookmark:
             "description": "Test Title",
             "extended": "Test notes",
             "tags": "",
-            "time": "2024-01-15T10:30:00Z"
+            "time": "2024-01-15T10:30:00Z",
         }
 
         bookmark = Bookmark.from_pinboard(pinboard_data)
@@ -64,7 +64,7 @@ class TestBookmark:
             "description": "Test Title",
             "extended": "",
             "tags": "python",
-            "time": "2024-01-15T10:30:00Z"
+            "time": "2024-01-15T10:30:00Z",
         }
 
         bookmark = Bookmark.from_pinboard(pinboard_data)
@@ -87,11 +87,7 @@ class TestSearchResult:
 
     def test_search_result_creation(self, sample_bookmarks):
         """Test creating a SearchResult."""
-        result = SearchResult(
-            bookmarks=sample_bookmarks[:2],
-            total=2,
-            query="python"
-        )
+        result = SearchResult(bookmarks=sample_bookmarks[:2], total=2, query="python")
 
         assert len(result.bookmarks) == 2
         assert result.total == 2
@@ -101,9 +97,7 @@ class TestSearchResult:
     def test_search_result_with_tags(self, sample_bookmarks):
         """Test creating a SearchResult with tags."""
         result = SearchResult(
-            bookmarks=sample_bookmarks,
-            total=3,
-            tags=["python", "web"]
+            bookmarks=sample_bookmarks, total=3, tags=["python", "web"]
         )
 
         assert len(result.bookmarks) == 3

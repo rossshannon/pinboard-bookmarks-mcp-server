@@ -17,22 +17,22 @@ def mock_pinboard_data() -> dict:
             "description": "Python Testing Best Practices",
             "extended": "Comprehensive guide to testing in Python with pytest",
             "tags": "python testing pytest",
-            "time": "2024-01-15T10:30:00Z"
+            "time": "2024-01-15T10:30:00Z",
         },
         {
             "href": "https://example.com/fastapi-tutorial",
             "description": "FastAPI Tutorial",
             "extended": "Learn how to build APIs with FastAPI",
             "tags": "python fastapi web",
-            "time": "2024-01-10T15:45:00Z"
+            "time": "2024-01-10T15:45:00Z",
         },
         {
             "href": "https://example.com/async-programming",
             "description": "Async Programming in Python",
             "extended": "",
             "tags": "python async asyncio",
-            "time": "2024-01-05T09:20:00Z"
-        }
+            "time": "2024-01-05T09:20:00Z",
+        },
     ]
 
 
@@ -46,7 +46,7 @@ def mock_tags_data() -> dict:
         "fastapi": 1,
         "web": 1,
         "async": 1,
-        "asyncio": 1
+        "asyncio": 1,
     }
 
 
@@ -59,14 +59,13 @@ def sample_bookmarks(mock_pinboard_data) -> list[Bookmark]:
 @pytest.fixture
 def sample_tags(mock_tags_data) -> list[TagCount]:
     """Create sample TagCount objects from mock data."""
-    return [
-        TagCount(tag=tag, count=count)
-        for tag, count in mock_tags_data.items()
-    ]
+    return [TagCount(tag=tag, count=count) for tag, count in mock_tags_data.items()]
 
 
 @pytest.fixture
-async def mock_client(mock_pinboard_data, mock_tags_data, sample_bookmarks, sample_tags):
+async def mock_client(
+    mock_pinboard_data, mock_tags_data, sample_bookmarks, sample_tags
+):
     """Create a mocked PinboardClient for testing."""
     client = Mock(spec=PinboardClient)
 

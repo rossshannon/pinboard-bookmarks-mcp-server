@@ -14,7 +14,7 @@ from datetime import datetime, timedelta
 from unittest.mock import MagicMock, patch
 
 # Add src to path for imports
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from pinboard_mcp_server.client import PinboardClient
 from pinboard_mcp_server.models import TagCount
@@ -57,29 +57,29 @@ class TestMCPIntegration(unittest.TestCase):
                 "description": "Python Testing Best Practices",
                 "extended": "Comprehensive guide to testing in Python with pytest",
                 "tags": "python testing pytest",
-                "time": recent_date_1
+                "time": recent_date_1,
             },
             {
                 "href": "https://example.com/fastapi-tutorial",
                 "description": "FastAPI Tutorial",
                 "extended": "Learn how to build APIs with FastAPI",
                 "tags": "python fastapi web",
-                "time": recent_date_2
+                "time": recent_date_2,
             },
             {
                 "href": "https://example.com/async-programming",
                 "description": "Async Programming in Python",
                 "extended": "",
                 "tags": "python async asyncio",
-                "time": recent_date_3
+                "time": recent_date_3,
             },
             {
                 "href": "https://example.com/react-hooks",
                 "description": "React Hooks Guide",
                 "extended": "Modern React development with hooks",
                 "tags": "react javascript frontend",
-                "time": old_date
-            }
+                "time": old_date,
+            },
         ]
 
         self.sample_tags_get = {
@@ -92,7 +92,7 @@ class TestMCPIntegration(unittest.TestCase):
             "asyncio": 1,
             "react": 1,
             "javascript": 1,
-            "frontend": 1
+            "frontend": 1,
         }
 
     def tearDown(self):
@@ -110,9 +110,10 @@ class TestMCPIntegration(unittest.TestCase):
         context.session.logger = MagicMock()
         return context
 
-    @patch('pinboard_mcp_server.client.pinboard.Pinboard')
+    @patch("pinboard_mcp_server.client.pinboard.Pinboard")
     def test_mcp_search_bookmarks_tool(self, mock_pinboard_class):
         """Test the MCP searchBookmarks tool with simulated Pinboard data"""
+
         async def run_test():
             # Mock the pinboard client
             mock_pb = MagicMock()
@@ -137,11 +138,13 @@ class TestMCPIntegration(unittest.TestCase):
             # Check that all results contain "python" in title, notes, or tags
             for bookmark in result.bookmarks:
                 found_python = (
-                    "python" in bookmark.title.lower() or
-                    "python" in bookmark.notes.lower() or
-                    any("python" in tag.lower() for tag in bookmark.tags)
+                    "python" in bookmark.title.lower()
+                    or "python" in bookmark.notes.lower()
+                    or any("python" in tag.lower() for tag in bookmark.tags)
                 )
-                self.assertTrue(found_python, f"Bookmark doesn't match search: {bookmark.title}")
+                self.assertTrue(
+                    found_python, f"Bookmark doesn't match search: {bookmark.title}"
+                )
 
             # Test case-insensitive search
             params = SearchBookmarksParams(query="REACT", limit=10)
@@ -152,9 +155,10 @@ class TestMCPIntegration(unittest.TestCase):
 
         asyncio.run(run_test())
 
-    @patch('pinboard_mcp_server.client.pinboard.Pinboard')
+    @patch("pinboard_mcp_server.client.pinboard.Pinboard")
     def test_mcp_list_recent_bookmarks_tool(self, mock_pinboard_class):
         """Test the MCP listRecentBookmarks tool"""
+
         async def run_test():
             # Mock the pinboard client
             mock_pb = MagicMock()
@@ -189,9 +193,10 @@ class TestMCPIntegration(unittest.TestCase):
 
         asyncio.run(run_test())
 
-    @patch('pinboard_mcp_server.client.pinboard.Pinboard')
+    @patch("pinboard_mcp_server.client.pinboard.Pinboard")
     def test_mcp_list_bookmarks_by_tags_tool(self, mock_pinboard_class):
         """Test the MCP listBookmarksByTags tool"""
+
         async def run_test():
             # Mock the pinboard client
             mock_pb = MagicMock()
@@ -231,9 +236,10 @@ class TestMCPIntegration(unittest.TestCase):
 
         asyncio.run(run_test())
 
-    @patch('pinboard_mcp_server.client.pinboard.Pinboard')
+    @patch("pinboard_mcp_server.client.pinboard.Pinboard")
     def test_mcp_list_tags_tool(self, mock_pinboard_class):
         """Test the MCP listTags tool"""
+
         async def run_test():
             # Mock the pinboard client
             mock_pb = MagicMock()
@@ -263,9 +269,10 @@ class TestMCPIntegration(unittest.TestCase):
 
         asyncio.run(run_test())
 
-    @patch('pinboard_mcp_server.client.pinboard.Pinboard')
+    @patch("pinboard_mcp_server.client.pinboard.Pinboard")
     def test_environment_token_usage(self, mock_pinboard_class):
         """Test that the environment variable is used when no token is provided"""
+
         async def run_test():
             # Set up environment
             os.environ["PINBOARD_TOKEN"] = self.test_token
@@ -286,17 +293,18 @@ class TestMCPIntegration(unittest.TestCase):
 
         asyncio.run(run_test())
 
-    @patch('pinboard_mcp_server.client.pinboard.Pinboard')
+    @patch("pinboard_mcp_server.client.pinboard.Pinboard")
     def test_field_mapping(self, mock_pinboard_class):
         """Test that Pinboard fields are correctly mapped to our model"""
+
         async def run_test():
             # Test data with explicit field mapping
             test_post = {
                 "href": "https://example.com/test",
                 "description": "This is the title",  # Maps to title
-                "extended": "These are the notes",   # Maps to notes
+                "extended": "These are the notes",  # Maps to notes
                 "tags": "tag1 tag2 tag3",
-                "time": "2024-01-15T10:30:00Z"
+                "time": "2024-01-15T10:30:00Z",
             }
 
             mock_pb = MagicMock()
@@ -312,7 +320,9 @@ class TestMCPIntegration(unittest.TestCase):
 
             # Verify field mapping
             self.assertEqual(bookmark.url, "https://example.com/test")
-            self.assertEqual(bookmark.title, "This is the title")  # description -> title
+            self.assertEqual(
+                bookmark.title, "This is the title"
+            )  # description -> title
             self.assertEqual(bookmark.notes, "These are the notes")  # extended -> notes
             self.assertEqual(bookmark.tags, ["tag1", "tag2", "tag3"])
 
@@ -320,9 +330,10 @@ class TestMCPIntegration(unittest.TestCase):
 
         asyncio.run(run_test())
 
-    @patch('pinboard_mcp_server.client.pinboard.Pinboard')
+    @patch("pinboard_mcp_server.client.pinboard.Pinboard")
     def test_caching_behavior(self, mock_pinboard_class):
         """Test that caching works correctly"""
+
         async def run_test():
             mock_pb = MagicMock()
             mock_pb.posts.all.return_value = self.sample_posts_all
@@ -362,5 +373,5 @@ class AsyncTestCase(unittest.TestCase):
         self.loop.close()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

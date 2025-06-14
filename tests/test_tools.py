@@ -83,16 +83,15 @@ class TestListBookmarksByTagsTool:
         )
 
     @pytest.mark.asyncio
-    async def test_list_bookmarks_by_tags_with_dates(self, mock_client, sample_bookmarks):
+    async def test_list_bookmarks_by_tags_with_dates(
+        self, mock_client, sample_bookmarks
+    ):
         """Test listing bookmarks by tags with date range."""
         mock_client.get_bookmarks_by_tags.return_value = sample_bookmarks[:1]
 
         tool_func = list_bookmarks_by_tags(mock_client)
         params = ListBookmarksByTagsParams(
-            tags=["python"],
-            from_date="2024-01-01",
-            to_date="2024-01-31",
-            limit=10
+            tags=["python"], from_date="2024-01-01", to_date="2024-01-31", limit=10
         )
         context = Mock()
         context.session.logger = Mock()
@@ -126,5 +125,5 @@ class TestListTagsTool:
 
         assert isinstance(result, list)
         assert len(result) == len(sample_tags)
-        assert all(hasattr(tag, 'tag') and hasattr(tag, 'count') for tag in result)
+        assert all(hasattr(tag, "tag") and hasattr(tag, "count") for tag in result)
         mock_client.get_all_tags.assert_called_once()

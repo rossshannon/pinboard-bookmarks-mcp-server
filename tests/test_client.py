@@ -11,7 +11,7 @@ from pinboard_mcp_server.models import Bookmark, TagCount
 class TestPinboardClient:
     """Test the PinboardClient class."""
 
-    @patch('pinboard_mcp_server.client.pinboard.Pinboard')
+    @patch("pinboard_mcp_server.client.pinboard.Pinboard")
     def test_init(self, mock_pinboard_class, valid_token):
         """Test client initialization."""
         client = PinboardClient(valid_token)
@@ -22,13 +22,13 @@ class TestPinboardClient:
         assert client._tag_cache is None
         mock_pinboard_class.assert_called_once_with(valid_token)
 
-    @patch('pinboard_mcp_server.client.pinboard.Pinboard')
+    @patch("pinboard_mcp_server.client.pinboard.Pinboard")
     def test_rate_limiting_sync(self, mock_pinboard_class, valid_token):
         """Test that synchronous rate limiting works correctly."""
         client = PinboardClient(valid_token)
 
         # Mock time.time() and time.sleep() to control timing
-        with patch('time.time') as mock_time, patch('time.sleep') as mock_sleep:
+        with patch("time.time") as mock_time, patch("time.sleep") as mock_sleep:
             # Set initial time to avoid triggering rate limit on first call
             client.last_request_time = 10.0
             # Each call to _rate_limit_sync calls time.time() twice: once to check, once to update
@@ -43,8 +43,10 @@ class TestPinboardClient:
             mock_sleep.assert_called_once_with(2.0)  # 3.0 - 1.0 = 2.0
 
     @pytest.mark.asyncio
-    @patch('pinboard_mcp_server.client.pinboard.Pinboard')
-    async def test_get_all_bookmarks_cache_miss(self, mock_pinboard_class, valid_token, mock_pinboard_data):
+    @patch("pinboard_mcp_server.client.pinboard.Pinboard")
+    async def test_get_all_bookmarks_cache_miss(
+        self, mock_pinboard_class, valid_token, mock_pinboard_data
+    ):
         """Test getting all bookmarks when cache is invalid."""
         # Mock the pinboard client
         mock_pb = Mock()
@@ -54,7 +56,7 @@ class TestPinboardClient:
 
         client = PinboardClient(valid_token)
 
-        with patch.object(client, '_rate_limit_sync') as mock_rate_limit:
+        with patch.object(client, "_rate_limit_sync") as mock_rate_limit:
             bookmarks = await client.get_all_bookmarks()
 
             assert len(bookmarks) == len(mock_pinboard_data)
@@ -63,24 +65,31 @@ class TestPinboardClient:
             assert mock_rate_limit.call_count >= 1
 
     @pytest.mark.asyncio
-    @patch('pinboard_mcp_server.client.pinboard.Pinboard')
-    async def test_search_bookmarks(self, mock_pinboard_class, valid_token, sample_bookmarks):
+    @patch("pinboard_mcp_server.client.pinboard.Pinboard")
+    async def test_search_bookmarks(
+        self, mock_pinboard_class, valid_token, sample_bookmarks
+    ):
         """Test searching bookmarks."""
         client = PinboardClient(valid_token)
 
-        with patch.object(client, 'get_all_bookmarks', new_callable=AsyncMock) as mock_get_all:
+        with patch.object(
+            client, "get_all_bookmarks", new_callable=AsyncMock
+        ) as mock_get_all:
             mock_get_all.return_value = sample_bookmarks
 
             # Test title search
             results = await client.search_bookmarks("Python", limit=10)
 
             assert len(results) > 0
-            assert all("python" in b.title.lower() or
-                      any("python" in tag.lower() for tag in b.tags) for b in results)
+            assert all(
+                "python" in b.title.lower()
+                or any("python" in tag.lower() for tag in b.tags)
+                for b in results
+            )
             mock_get_all.assert_called_once()
 
     @pytest.mark.asyncio
-    @patch('pinboard_mcp_server.client.pinboard.Pinboard')
+    @patch("pinboard_mcp_server.client.pinboard.Pinboard")
     async def test_get_all_tags(self, mock_pinboard_class, valid_token, mock_tags_data):
         """Test getting all tags."""
         # Mock the pinboard client
@@ -90,7 +99,7 @@ class TestPinboardClient:
 
         client = PinboardClient(valid_token)
 
-        with patch.object(client, '_rate_limit_sync'):
+        with patch.object(client, "_rate_limit_sync"):
             tags = await client.get_all_tags()
 
             assert len(tags) == len(mock_tags_data)
@@ -98,7 +107,7 @@ class TestPinboardClient:
             mock_pb.tags.get.assert_called_once()
 
     @pytest.mark.asyncio
-    @patch('pinboard_mcp_server.client.pinboard.Pinboard')
+    @patch("pinboard_mcp_server.client.pinboard.Pinboard")
     async def test_close(self, mock_pinboard_class, valid_token):
         """Test client cleanup."""
         client = PinboardClient(valid_token)

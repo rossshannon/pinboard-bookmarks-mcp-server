@@ -56,6 +56,7 @@ class PinboardClient:
             return True
 
         try:
+
             def _get_update():
                 self._rate_limit_sync()
                 return self._pb.posts.update()
@@ -78,19 +79,19 @@ class PinboardClient:
 
     async def _refresh_bookmark_cache(self) -> None:
         """Refresh the bookmark cache from Pinboard API."""
+
         def _get_posts() -> list[Any]:
             self._rate_limit_sync()
             return self._pb.posts.all()
 
         result: list[Any] = await self._run_in_executor(_get_posts)
 
-        self._bookmark_cache = [
-            Bookmark.from_pinboard(post) for post in result
-        ]
+        self._bookmark_cache = [Bookmark.from_pinboard(post) for post in result]
         self._cache_valid_until = datetime.now() + timedelta(hours=1)
 
     async def _refresh_tag_cache(self) -> None:
         """Refresh the tag cache from Pinboard API."""
+
         def _get_tags() -> Any:
             self._rate_limit_sync()
             return self._pb.tags.get()
@@ -98,8 +99,7 @@ class PinboardClient:
         result: Any = await self._run_in_executor(_get_tags)
 
         self._tag_cache = [
-            TagCount(tag=tag, count=count)
-            for tag, count in result.items()
+            TagCount(tag=tag, count=count) for tag, count in result.items()
         ]
 
     async def get_all_bookmarks(self) -> list[Bookmark]:
@@ -129,9 +129,11 @@ class PinboardClient:
         # Search in title, notes, and tags
         matches = []
         for bookmark in bookmarks:
-            if (query_lower in bookmark.title.lower() or
-                query_lower in bookmark.notes.lower() or
-                any(query_lower in tag.lower() for tag in bookmark.tags)):
+            if (
+                query_lower in bookmark.title.lower()
+                or query_lower in bookmark.notes.lower()
+                or any(query_lower in tag.lower() for tag in bookmark.tags)
+            ):
                 matches.append(bookmark)
                 if len(matches) >= limit:
                     break
@@ -140,7 +142,9 @@ class PinboardClient:
         self._query_cache[cache_key] = matches
         return matches
 
-    async def get_recent_bookmarks(self, days: int = 7, limit: int = 20) -> list[Bookmark]:
+    async def get_recent_bookmarks(
+        self, days: int = 7, limit: int = 20
+    ) -> list[Bookmark]:
         """Get bookmarks from the last N days."""
         cache_key = f"recent:{days}:{limit}"
         if cache_key in self._query_cache:
@@ -151,7 +155,8 @@ class PinboardClient:
 
         # Filter by date and sort by most recent first
         recent = [
-            bookmark for bookmark in bookmarks
+            bookmark
+            for bookmark in bookmarks
             if bookmark.saved_at.replace(tzinfo=None) >= cutoff_date
         ]
         recent.sort(key=lambda b: b.saved_at, reverse=True)
@@ -165,7 +170,7 @@ class PinboardClient:
         tags: list[str],
         from_date: Optional[datetime] = None,
         to_date: Optional[datetime] = None,
-        limit: int = 20
+        limit: int = 20,
     ) -> list[Bookmark]:
         """Get bookmarks filtered by tags and optional date range."""
         cache_key = f"tags:{':'.join(sorted(tags))}:{from_date}:{to_date}:{limit}"
