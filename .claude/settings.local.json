@@ -20,7 +20,8 @@
       "Bash(uv run pytest:*)",
       "Bash(gh run list:*)",
       "Bash(gh run:*)",
-      "Bash(ruff format:*)"
+      "Bash(ruff format:*)",
+      "Bash(python -m pytest --cov=src --cov-report=term-missing)"
     ],
     "deny": []
   }
