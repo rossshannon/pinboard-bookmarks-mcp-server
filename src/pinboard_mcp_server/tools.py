@@ -1,7 +1,7 @@
 """MCP tools for Pinboard bookmark operations."""
 
 from datetime import datetime
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 
 from fastmcp import Context  # type: ignore
 from pydantic import BaseModel, Field
@@ -47,9 +47,9 @@ class ListBookmarksByTagsParams(BaseModel):
     )
 
 
-def search_bookmarks(client: PinboardClient) -> Callable:
+def search_bookmarks(client: PinboardClient) -> Any:
     """Create the searchBookmarks MCP tool."""
-
+    
     async def _search_bookmarks(
         params: SearchBookmarksParams, context: Context
     ) -> SearchResult:
@@ -66,10 +66,12 @@ def search_bookmarks(client: PinboardClient) -> Callable:
             context.session.logger.error(f"Error searching bookmarks: {e}")
             raise
 
+    # Add the name attribute that FastMCP expects
+    _search_bookmarks.name = "searchBookmarks"
     return _search_bookmarks
 
 
-def list_recent_bookmarks(client: PinboardClient) -> Callable:
+def list_recent_bookmarks(client: PinboardClient) -> Any:
     """Create the listRecentBookmarks MCP tool."""
 
     async def _list_recent_bookmarks(
@@ -88,10 +90,11 @@ def list_recent_bookmarks(client: PinboardClient) -> Callable:
             context.session.logger.error(f"Error listing recent bookmarks: {e}")
             raise
 
+    _list_recent_bookmarks.name = "listRecentBookmarks"
     return _list_recent_bookmarks
 
 
-def list_bookmarks_by_tags(client: PinboardClient) -> Callable:
+def list_bookmarks_by_tags(client: PinboardClient) -> Any:
     """Create the listBookmarksByTags MCP tool."""
 
     async def _list_bookmarks_by_tags(
@@ -124,10 +127,11 @@ def list_bookmarks_by_tags(client: PinboardClient) -> Callable:
             context.session.logger.error(f"Error listing bookmarks by tags: {e}")
             raise
 
+    _list_bookmarks_by_tags.name = "listBookmarksByTags"
     return _list_bookmarks_by_tags
 
 
-def list_tags(client: PinboardClient) -> Callable:
+def list_tags(client: PinboardClient) -> Any:
     """Create the listTags MCP tool."""
 
     async def _list_tags(context: Context) -> list[TagCount]:
@@ -139,4 +143,5 @@ def list_tags(client: PinboardClient) -> Callable:
             context.session.logger.error(f"Error listing tags: {e}")
             raise
 
+    _list_tags.name = "listTags"
     return _list_tags
