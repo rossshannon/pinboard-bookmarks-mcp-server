@@ -53,17 +53,29 @@ async def debug_bookmarks():
         synology_tags = [tag for tag in tags if "synology" in tag.tag.lower()]
         print(f"\nSynology tags: {synology_tags}")
         
-        # Search using the current search function (this will auto-expand if needed)
-        search_results = await client.search_bookmarks("synology", limit=50)
-        print(f"\nSearch results for 'synology': {len(search_results)}")
-        for result in search_results[:3]:  # Show first 3
-            print(f"  - {result.title} (tags: {result.tags}) - {result.saved_at}")
+        # Test the optimized search strategies
+        print("\n=== TESTING SEARCH STRATEGIES ===")
         
-        # Search by tags using current function (this will auto-expand if needed)
+        # Search using query - should use tag-optimized search for exact matches
+        print("\n1. Text search for 'synology' (should use tag optimization):")
+        search_results = await client.search_bookmarks("synology", limit=50)
+        print(f"   Results: {len(search_results)}")
+        for result in search_results[:3]:  # Show first 3
+            print(f"   - {result.title} (tags: {result.tags}) - {result.saved_at}")
+        
+        # Search by tags - should use direct tag API
+        print("\n2. Tag-based search for ['synology'] (should use direct tag API):")
         tag_results = await client.get_bookmarks_by_tags(["synology"], limit=50)
-        print(f"\nTag-based search results for 'synology': {len(tag_results)}")
+        print(f"   Results: {len(tag_results)}")
         for result in tag_results[:3]:  # Show first 3
-            print(f"  - {result.title} (tags: {result.tags}) - {result.saved_at}")
+            print(f"   - {result.title} (tags: {result.tags}) - {result.saved_at}")
+        
+        # Test with a query that likely won't match any tags exactly
+        print("\n3. Text search for 'nas storage' (should use expanded search):")
+        nas_results = await client.search_bookmarks("nas storage", limit=10)
+        print(f"   Results: {len(nas_results)}")
+        for result in nas_results[:2]:  # Show first 2
+            print(f"   - {result.title} (tags: {result.tags}) - {result.saved_at}")
         
         # Check if we expanded the search
         print(f"\nExpanded search was used: {client._has_expanded_data}")

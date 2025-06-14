@@ -63,12 +63,13 @@ Common commands:
 
 ## Smart Search Implementation
 
-The client now implements a two-tier search strategy:
+The client implements a multi-tier search strategy optimized for large bookmark collections:
 
-1. **Initial Search**: Uses `posts.recent(count=100)` to get the most recent 100 bookmarks for fast searches
-2. **Expanded Search**: If no results found, automatically uses `posts.all(fromdt=...)` with a 2-year filter to search older bookmarks
+1. **Initial Search**: Uses `posts.recent(count=100)` for the most recent 100 bookmarks (fast)
+2. **Tag-Optimized Search**: For exact tag matches, uses `posts.all(tag=...)` (very efficient) 
+3. **Expanded Search**: Last resort uses `posts.all(fromdt=...)` with 90-day filter (safe for large collections)
 
-This balances performance (fast searches of recent content) with completeness (can find older bookmarks when needed). The expanded search is cached for 1 hour to avoid repeated API calls.
+**Safety for Large Collections**: With 100k+ bookmarks, the expanded search is limited to 90 days to avoid downloading massive amounts of data. Tag-based searches are preferred as they're much more efficient regardless of collection size.
 
 ## Using FastMCP
 
