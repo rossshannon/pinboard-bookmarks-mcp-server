@@ -8,14 +8,14 @@
 
 | **Project Name** | Pinboard MCP Server                                    |
 | ---------------- | ------------------------------------------------------ |
-| **Version**      | 0.1 (DRAFT)                                            |
+| **Version**      | 0.2                                                    |
 | **Authors**      |                                                        |
 | **Last Updated** |                                                        |
 | **Stakeholders** | Product • Engineering • QA • DevOps • Security • Legal |
 
 ## 2. Purpose & Background
 
-Large‑Language‑Model (LLM) chat sessions benefit from personalised context. This project delivers a **local read‑only MCP server** that surfaces a user’s Pinboard.in bookmarks—via the Pinboard API and the `pinboard.py` wrapper—so an LLM can search, filter and retrieve metadata (URL, tags, description, save‑date) at inference time.
+Large‑Language‑Model (LLM) chat sessions benefit from personalised context. This project delivers a **local read‑only MCP server** that surfaces a user’s Pinboard.in bookmarks—via the Pinboard v1 API and the `pinboard.py` wrapper—so an LLM can search, filter and retrieve metadata (URL, tags, description, save‑date) at inference time.
 
 Motivations:
 
@@ -23,6 +23,8 @@ Motivations:
 - Enable “what was I researching this week?” style prompts.
 
 FastMCP 2.0 provides the scaffolding (Tool abstraction, async FastAPI server, JSON‑Schema validation) while `pinboard.py` simplifies API calls and error handling.
+
+**Pinboard field nomenclature** – The upstream API re-uses the vestigial Delicious vocabulary: `description` is the bookmark title and `extended` is the free-form notes. The `pinboard.py` wrapper preserves these names. Throughout this PRD we map them to the more intuitive `title` and `notes` fields returned by the MCP.
 
 ## 3. Personas & Use Cases
 
@@ -37,7 +39,7 @@ FastMCP 2.0 provides the scaffolding (Tool abstraction, async FastAPI server, J
 
 - Expose **read‑only** Pinboard data via MCP tools (`searchBookmarks`, `listRecentBookmarks`, `listBookmarksByTags`, `listTags`).
 - P50 latency < 250 ms for cached responses; < 600 ms cold (single‑user localhost).
-- Respect Pinboard’s unofficial guideline of **≤ 1 request every 3 s**; implement caching + `posts/update` polling.
+- Respect Pinboard's unofficial guideline of **≤ 1 request every 3 s**; implement caching + `posts/update` polling.
 - Provide OpenAPI 3.1 docs for every endpoint.
 - Ship CI (lint, type‑check, tests, container) and observability hooks.
 
@@ -56,6 +58,13 @@ FastMCP 2.0 provides the scaffolding (Tool abstraction, async FastAPI server, J
 | `listBookmarksByTags` | `GET` | Fetch bookmarks filtered by up to 3 tags.                   | `tags[]` (list [str] 1‑3), `from_date?`, `to_date?`, `limit?` | List    |
 | `listRecentBookmarks` | `GET` | Return bookmarks saved in the last *n* days (default 7).    | `days` (int 1‑30), `limit?`                                   | List    |
 | `listTags`            | `GET` | Retrieve all tags with counts.                              | —                                                             | List    |
+
+### 5.1.1 Implementation Notes
+
+- `searchBookmarks` is served from an in-memory cache seeded by `posts/all`, reducing Pinboard traffic at the cost of RAM (see § 12.4).
+- Cache invalidation relies on `posts/update`, a lightweight endpoint that returns the timestamp of the last change; if unchanged, we skip re-download.
+- Field-mapping reminder: Pinboard's `description` → `title`, `extended` → `notes`.
+- v0.1 is deliberately **read-only**. Write operations (`posts/add`, `posts/delete`, tag rename, etc.) are deferred to a future MCP release (see Appendix D).
 
 ### 5.2 Authentication & Authorisation
 
@@ -160,3 +169,4 @@ FastMCP 2.0 provides the scaffolding (Tool abstraction, async FastAPI server, J
 - **A. Example Pinboard Calls** – `posts/recent`, `tags/get`, `posts/all?fromdt=…`.
 - **B. Sequence Diagram** – Prompt → MCP client → Pinboard MCP → Cache? → Pinboard API.
 - **C. Rate‑Limit Table** – 1 req / 3 s guideline; 429 back‑off strategy.
+- **D. Field Mapping & Future Write Tools** – Mapping of Pinboard to MCP fields and roadmap items.
