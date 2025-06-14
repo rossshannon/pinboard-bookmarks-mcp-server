@@ -61,15 +61,22 @@ Common commands:
 - Use `posts/all` ONLY with additional parameters like `tag=` or `fromdt=` to filter results
 - Always implement pagination and limits when possible
 
-## Smart Search Implementation
+## Generous Search Strategy
 
-The client implements a multi-tier search strategy optimized for large bookmark collections:
+The client implements a comprehensive search strategy designed to provide rich data for LLM analysis:
 
-1. **Initial Search**: Uses `posts.recent(count=100)` for the most recent 100 bookmarks (fast)
-2. **Tag-Optimized Search**: For exact tag matches, uses `posts.all(tag=...)` (very efficient) 
-3. **Expanded Search**: Last resort uses `posts.all(fromdt=...)` with 90-day filter (safe for large collections)
+1. **Tag-Based Search**: Uses `posts.all(tag=...)` to get ALL bookmarks with specific tags (most efficient)
+2. **Recent Search**: Uses `posts.recent(count=100)` for fast searches of latest content  
+3. **Extended Search**: Uses `posts.all(fromdt=...)` with 6-month auto-expansion, up to 2-year manual lookback
+4. **Intelligent Optimization**: Automatically detects exact tag matches for efficient retrieval
 
-**Safety for Large Collections**: With 100k+ bookmarks, the expanded search is limited to 90 days to avoid downloading massive amounts of data. Tag-based searches are preferred as they're much more efficient regardless of collection size.
+**Philosophy**: Be generous with data while respecting server resources. Tag-based searches are preferred for historical access, with time-based searches limited to reasonable ranges.
+
+**Available Tools**:
+- `search_bookmarks()` - Smart search with 6-month auto-expansion (up to 100 results)
+- `search_bookmarks_extended()` - Configurable 1-year default search (up to 200 results)  
+- `list_bookmarks_by_tags()` - ALL bookmarks with specific tags (up to 200 results) - **Most efficient for historical data**
+- `list_tags()` - All available tags for discovery
 
 ## Using FastMCP
 

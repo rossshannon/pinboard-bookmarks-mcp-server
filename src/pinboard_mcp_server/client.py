@@ -113,9 +113,9 @@ class PinboardClient:
         def _get_posts() -> Any:
             self._rate_limit_sync()
             if expand_search:
-                # Get bookmarks from the last 90 days to balance completeness vs performance
-                # This is much safer for users with large bookmark collections
-                from_date = datetime.now() - timedelta(days=90)
+                # Get bookmarks from the last 6 months - balance between comprehensive and reasonable
+                # The LLM can intelligently select what's most relevant
+                from_date = datetime.now() - timedelta(days=180)  # 6 months
                 return self._pb.posts.all(fromdt=from_date.strftime('%Y-%m-%dT%H:%M:%SZ'))
             else:
                 # Use posts.recent for initial cache - gets most recent 100 posts
@@ -248,11 +248,81 @@ class PinboardClient:
                 except Exception:
                     pass  # Fall through to expanded search if tag search fails
             
-            # If still no matches, only use expanded search for very specific cases
-            # With 100k+ bookmarks, we want to avoid downloading large amounts of data
-            # The user should use tag-based searches for comprehensive results
-            pass  # For now, don't do expanded search for text queries
+            # If still no matches and we haven't expanded yet, try with more data
+            # This allows comprehensive free-text search but limits scope for safety
+            if not matches and not self._has_expanded_data:
+                bookmarks = await self.get_all_bookmarks(expand_if_needed=True)
+                for bookmark in bookmarks:
+                    if (
+                        query_lower in bookmark.title.lower()
+                        or query_lower in bookmark.notes.lower()
+                        or any(query_lower in tag.lower() for tag in bookmark.tags)
+                    ):
+                        matches.append(bookmark)
+                        if len(matches) >= limit:
+                            break
 
+        # Cache the result
+        self._query_cache[cache_key] = matches
+        return matches
+
+    async def search_bookmarks_extended(
+        self, query: str, days_back: int = 365, limit: int = 100
+    ) -> list[Bookmark]:
+        """Extended search that looks further back in time for comprehensive results.
+        
+        Args:
+            query: Search query to match against bookmark titles, notes, and tags
+            days_back: How many days back to search (default 1 year)
+            limit: Maximum number of results to return (default 100)
+            
+        Note: This provides generous data for LLM filtering and analysis.
+        Returns comprehensive results that the client can intelligently filter.
+        """
+        cache_key = f"extended_search:{query}:{days_back}:{limit}"
+        if cache_key in self._query_cache:
+            return self._query_cache[cache_key]
+
+        query_lower = query.lower()
+        
+        # First check if this is an exact tag match - use efficient tag search
+        tags = await self.get_all_tags()
+        exact_tag_match = next((tag.tag for tag in tags if tag.tag.lower() == query_lower), None)
+        
+        matches = []
+        if exact_tag_match:
+            # Use efficient tag-based search for exact matches
+            try:
+                await self._search_by_tag_direct(exact_tag_match, matches, None, None, limit)
+            except Exception:
+                pass
+        
+        # If no tag match or tag search failed, do extended time-based search
+        if not matches:
+            def _get_extended_posts() -> Any:
+                self._rate_limit_sync()
+                from_date = datetime.now() - timedelta(days=days_back)
+                return self._pb.posts.all(fromdt=from_date.strftime('%Y-%m-%dT%H:%M:%SZ'))
+
+            result: Any = await self._run_in_executor(_get_extended_posts)
+            posts_list = result if isinstance(result, list) else []
+            
+            # Search through the extended results
+            for post in posts_list:
+                if len(matches) >= limit:
+                    break
+                    
+                bookmark = Bookmark.from_pinboard(self._convert_pinboard_bookmark(post))
+                if (
+                    query_lower in bookmark.title.lower()
+                    or query_lower in bookmark.notes.lower()
+                    or any(query_lower in tag.lower() for tag in bookmark.tags)
+                ):
+                    matches.append(bookmark)
+
+        # Sort by most recent first
+        matches.sort(key=lambda b: b.saved_at, reverse=True)
+        
         # Cache the result
         self._query_cache[cache_key] = matches
         return matches
