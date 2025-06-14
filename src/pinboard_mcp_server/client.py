@@ -3,10 +3,10 @@
 import asyncio
 import time
 from datetime import datetime, timedelta
-from typing import List, Optional
+from typing import List, Optional, Any
 from concurrent.futures import ThreadPoolExecutor
 
-import pinboard
+import pinboard  # type: ignore
 from cachetools import LRUCache
 from dateutil.parser import parse as parse_date
 
@@ -45,7 +45,7 @@ class PinboardClient:
             time.sleep(self.min_request_interval - time_since_last)
         self.last_request_time = time.time()
     
-    async def _run_in_executor(self, func, *args, **kwargs):
+    async def _run_in_executor(self, func, *args, **kwargs) -> Any:
         """Run a synchronous function in the thread pool."""
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(self._executor, func, *args, **kwargs)
@@ -78,11 +78,11 @@ class PinboardClient:
     
     async def _refresh_bookmark_cache(self) -> None:
         """Refresh the bookmark cache from Pinboard API."""
-        def _get_posts():
+        def _get_posts() -> List[Any]:
             self._rate_limit_sync()
             return self._pb.posts.all()
         
-        result = await self._run_in_executor(_get_posts)
+        result: List[Any] = await self._run_in_executor(_get_posts)
         
         self._bookmark_cache = [
             Bookmark.from_pinboard(post) for post in result
@@ -91,11 +91,11 @@ class PinboardClient:
     
     async def _refresh_tag_cache(self) -> None:
         """Refresh the tag cache from Pinboard API."""
-        def _get_tags():
+        def _get_tags() -> Any:
             self._rate_limit_sync()
             return self._pb.tags.get()
         
-        result = await self._run_in_executor(_get_tags)
+        result: Any = await self._run_in_executor(_get_tags)
         
         self._tag_cache = [
             TagCount(tag=tag, count=count) 

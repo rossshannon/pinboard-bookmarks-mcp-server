@@ -4,7 +4,7 @@ import asyncio
 import os
 from typing import Any
 
-from fastmcp import FastMCP
+from fastmcp import FastMCP  # type: ignore
 
 from pinboard_mcp_server.client import PinboardClient
 from pinboard_mcp_server.tools import (
@@ -15,9 +15,9 @@ from pinboard_mcp_server.tools import (
 )
 
 
-def create_server() -> FastMCP:
+def create_server() -> Any:
     """Create and configure the FastMCP server."""
-    server = FastMCP("Pinboard MCP Server")
+    server: Any = FastMCP("Pinboard MCP Server")
     
     # Get Pinboard API token
     token = os.getenv("PINBOARD_TOKEN")
@@ -36,11 +36,11 @@ def create_server() -> FastMCP:
     return server
 
 
-def main() -> None:
+async def main() -> None:
     """Main entry point."""
     try:
         server = create_server()
-        asyncio.run(server.run())
+        await server.run()
     except KeyboardInterrupt:
         print("\nServer stopped")
     except Exception as e:
@@ -49,4 +49,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

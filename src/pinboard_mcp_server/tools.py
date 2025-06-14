@@ -1,9 +1,9 @@
 """MCP tools for Pinboard bookmark operations."""
 
 from datetime import datetime
-from typing import List, Optional
+from typing import List, Optional, Callable
 
-from fastmcp import Context
+from fastmcp import Context  # type: ignore
 from pydantic import BaseModel, Field
 
 from pinboard_mcp_server.client import PinboardClient
@@ -30,7 +30,7 @@ class ListBookmarksByTagsParams(BaseModel):
     limit: int = Field(default=20, ge=1, le=100, description="Maximum number of results to return")
 
 
-def search_bookmarks(client: PinboardClient):
+def search_bookmarks(client: PinboardClient) -> Callable:
     """Create the searchBookmarks MCP tool."""
     
     async def _search_bookmarks(params: SearchBookmarksParams, context: Context) -> SearchResult:
@@ -44,7 +44,8 @@ def search_bookmarks(client: PinboardClient):
             return SearchResult(
                 bookmarks=bookmarks,
                 total=len(bookmarks),
-                query=params.query
+                query=params.query,
+                tags=None
             )
         except Exception as e:
             context.session.logger.error(f"Error searching bookmarks: {e}")
@@ -53,7 +54,7 @@ def search_bookmarks(client: PinboardClient):
     return _search_bookmarks
 
 
-def list_recent_bookmarks(client: PinboardClient):
+def list_recent_bookmarks(client: PinboardClient) -> Callable:
     """Create the listRecentBookmarks MCP tool."""
     
     async def _list_recent_bookmarks(params: ListRecentBookmarksParams, context: Context) -> SearchResult:
@@ -66,7 +67,9 @@ def list_recent_bookmarks(client: PinboardClient):
             
             return SearchResult(
                 bookmarks=bookmarks,
-                total=len(bookmarks)
+                total=len(bookmarks),
+                query=None,
+                tags=None
             )
         except Exception as e:
             context.session.logger.error(f"Error listing recent bookmarks: {e}")
@@ -75,7 +78,7 @@ def list_recent_bookmarks(client: PinboardClient):
     return _list_recent_bookmarks
 
 
-def list_bookmarks_by_tags(client: PinboardClient):
+def list_bookmarks_by_tags(client: PinboardClient) -> Callable:
     """Create the listBookmarksByTags MCP tool."""
     
     async def _list_bookmarks_by_tags(params: ListBookmarksByTagsParams, context: Context) -> SearchResult:
@@ -99,6 +102,7 @@ def list_bookmarks_by_tags(client: PinboardClient):
             return SearchResult(
                 bookmarks=bookmarks,
                 total=len(bookmarks),
+                query=None,
                 tags=params.tags
             )
         except ValueError as e:
@@ -111,7 +115,7 @@ def list_bookmarks_by_tags(client: PinboardClient):
     return _list_bookmarks_by_tags
 
 
-def list_tags(client: PinboardClient):
+def list_tags(client: PinboardClient) -> Callable:
     """Create the listTags MCP tool."""
     
     async def _list_tags(context: Context) -> List[TagCount]:

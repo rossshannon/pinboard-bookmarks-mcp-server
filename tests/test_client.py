@@ -31,7 +31,8 @@ class TestPinboardClient:
         with patch('time.time') as mock_time, patch('time.sleep') as mock_sleep:
             # Set initial time to avoid triggering rate limit on first call
             client.last_request_time = 10.0
-            mock_time.side_effect = [14.0, 15.0, 18.0]  # Times for each call
+            # Each call to _rate_limit_sync calls time.time() twice: once to check, once to update
+            mock_time.side_effect = [14.0, 14.0, 15.0, 15.0, 18.0, 18.0]
             
             # First call should not sleep (14.0 - 10.0 = 4.0 > 3.0)
             client._rate_limit_sync()

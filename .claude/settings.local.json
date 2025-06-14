@@ -8,7 +8,9 @@
       "Bash(poetry --version)",
       "Bash(mkdir:*)",
       "Bash(git add:*)",
-      "Bash(git commit:*)"
+      "Bash(git commit:*)",
+      "Bash(source:*)",
+      "Bash(python -m pytest -v)"
     ],
     "deny": []
   }

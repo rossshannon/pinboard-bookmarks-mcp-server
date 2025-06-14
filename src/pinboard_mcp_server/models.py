@@ -1,7 +1,7 @@
 """Data models for the Pinboard MCP Server."""
 
 from datetime import datetime
-from typing import List, Optional
+from typing import Dict, List, Optional, Any
 from uuid import uuid4
 
 from pydantic import BaseModel, Field
@@ -18,7 +18,7 @@ class Bookmark(BaseModel):
     saved_at: datetime = Field(description="When the bookmark was saved")
     
     @classmethod
-    def from_pinboard(cls, pinboard_post: dict) -> "Bookmark":
+    def from_pinboard(cls, pinboard_post: Dict[str, Any]) -> "Bookmark":
         """Create a Bookmark from a Pinboard API post response."""
         return cls(
             url=pinboard_post["href"],
@@ -50,4 +50,4 @@ class ErrorResponse(BaseModel):
     
     error: str = Field(description="Error message")
     code: Optional[str] = Field(None, description="Error code")
-    details: Optional[dict] = Field(None, description="Additional error details")
+    details: Optional[Dict[str, Any]] = Field(None, description="Additional error details")
