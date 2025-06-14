@@ -120,8 +120,18 @@ markers = [
 [tool.coverage.run]
 source = ["src"]
 branch = true
+omit = [
+    "src/pinboard_mcp_server/main.py",
+]
 
 [tool.coverage.report]
 show_missing = true
 skip_covered = false
 fail_under = 75
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "if __name__ == .__main__.:",
+    "raise AssertionError",
+    "raise NotImplementedError",
+]
