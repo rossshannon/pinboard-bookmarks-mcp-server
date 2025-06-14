@@ -39,3 +39,25 @@ Based on the PRD (docs/pinboard_mcp_server_prd.md), the system follows this desi
 - Load testing with k6 targeting 30 RPS
 - Never log Pinboard API tokens for security
 - All dates returned in ISO-8601 Zulu format
+
+## Virtual Environment
+
+The project uses a Python virtual environment at `~/.venvs/pinboard-bookmarks-mcp-server/`. Always activate before running tests or development commands:
+
+```bash
+source ~/.venvs/pinboard-bookmarks-mcp-server/bin/activate
+```
+
+Common commands:
+- `python -m pytest -v` - Run all tests
+- `ruff check src/ tests/` - Run linting
+- `ruff format src/ tests/` - Format code
+- `mypy src/` - Run type checking
+
+## CRITICAL: Pinboard API Usage
+
+- **NEVER use `posts/all` without filters** - This endpoint can return hundreds of megabytes of data for active users
+- Use `posts/recent` for recent bookmarks (limited to ~100 posts)
+- Use `posts/all` ONLY with additional parameters like `tag=` or `fromdt=` to filter results
+- Always implement pagination and limits when possible
+- Current implementation needs refactoring to avoid full dataset downloads

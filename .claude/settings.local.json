@@ -12,7 +12,12 @@
       "Bash(source:*)",
       "Bash(python -m pytest -v)",
       "Bash(python -m pytest tests/test_integration.py -v)",
-      "Bash(python -m pytest tests/test_integration.py::TestMCPIntegration::test_mcp_list_recent_bookmarks_tool -v)"
+      "Bash(python -m pytest tests/test_integration.py::TestMCPIntegration::test_mcp_list_recent_bookmarks_tool -v)",
+      "Bash(mypy:*)",
+      "Bash(python test_mcp_harness_mock.py)",
+      "Bash(ruff check:*)",
+      "Bash(python3 -m pytest -v)",
+      "Bash(uv run pytest:*)"
     ],
     "deny": []
   }

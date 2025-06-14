@@ -8,31 +8,31 @@ from fastmcp import FastMCP  # type: ignore
 
 from pinboard_mcp_server.client import PinboardClient
 from pinboard_mcp_server.tools import (
+    list_bookmarks_by_tags,
     list_recent_bookmarks,
     list_tags,
     search_bookmarks,
-    list_bookmarks_by_tags,
 )
 
 
 def create_server() -> Any:
     """Create and configure the FastMCP server."""
     server: Any = FastMCP("Pinboard MCP Server")
-    
+
     # Get Pinboard API token
     token = os.getenv("PINBOARD_TOKEN")
     if not token:
         raise ValueError("PINBOARD_TOKEN environment variable is required")
-    
+
     # Initialize Pinboard client
     client = PinboardClient(token)
-    
+
     # Register tools
     server.add_tool(search_bookmarks(client))
     server.add_tool(list_recent_bookmarks(client))
     server.add_tool(list_bookmarks_by_tags(client))
     server.add_tool(list_tags(client))
-    
+
     return server
 
 
