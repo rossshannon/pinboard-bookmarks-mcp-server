@@ -36,6 +36,29 @@ class PinboardClient:
 
         # Thread pool for running sync pinboard.py calls
         self._executor = ThreadPoolExecutor(max_workers=1)
+    
+    def _convert_pinboard_bookmark(self, pb_bookmark) -> dict[str, Any]:
+        """Convert pinboard.Bookmark object to dict format our models expect."""
+        # pinboard.Bookmark has: url, description, extended, tags (list), time (datetime)
+        # We need: href, description, extended, tags (space-separated string), time (ISO string)
+        
+        tags_list = getattr(pb_bookmark, 'tags', [])
+        # Remove empty tags and join with spaces
+        tags_str = ' '.join([tag for tag in tags_list if tag.strip()])
+        
+        time_obj = getattr(pb_bookmark, 'time', None)
+        if time_obj and hasattr(time_obj, 'isoformat'):
+            time_str = time_obj.isoformat() + 'Z'
+        else:
+            time_str = '2024-01-01T00:00:00Z'
+        
+        return {
+            "href": pb_bookmark.url,
+            "description": pb_bookmark.description,
+            "extended": getattr(pb_bookmark, 'extended', ''),
+            "tags": tags_str,
+            "time": time_str
+        }
 
     def _rate_limit_sync(self) -> None:
         """Ensure we don't exceed rate limits (synchronous)."""
@@ -78,15 +101,23 @@ class PinboardClient:
             return False
 
     async def _refresh_bookmark_cache(self) -> None:
-        """Refresh the bookmark cache from Pinboard API."""
+        """Refresh the bookmark cache from Pinboard API using recent posts."""
 
-        def _get_posts() -> list[Any]:
+        def _get_posts() -> Any:
             self._rate_limit_sync()
-            return self._pb.posts.all()
+            # Use posts.recent instead of posts.all to avoid downloading everything
+            # This gets the most recent 100 posts max
+            return self._pb.posts.recent(count=100)
 
-        result: list[Any] = await self._run_in_executor(_get_posts)
+        result: Any = await self._run_in_executor(_get_posts)
 
-        self._bookmark_cache = [Bookmark.from_pinboard(post) for post in result]
+        # posts.recent() returns a dict with 'posts' key containing list of Bookmark objects
+        posts_list = result['posts'] if isinstance(result, dict) and 'posts' in result else []
+        
+        self._bookmark_cache = [
+            Bookmark.from_pinboard(self._convert_pinboard_bookmark(post)) 
+            for post in posts_list
+        ]
         self._cache_valid_until = datetime.now() + timedelta(hours=1)
 
     async def _refresh_tag_cache(self) -> None:
@@ -98,8 +129,9 @@ class PinboardClient:
 
         result: Any = await self._run_in_executor(_get_tags)
 
+        # The result is a list of Tag objects with .name and .count attributes
         self._tag_cache = [
-            TagCount(tag=tag, count=count) for tag, count in result.items()
+            TagCount(tag=tag.name, count=tag.count) for tag in result
         ]
 
     async def get_all_bookmarks(self) -> list[Bookmark]:

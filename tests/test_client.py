@@ -48,9 +48,22 @@ class TestPinboardClient:
         self, mock_pinboard_class, valid_token, mock_pinboard_data
     ):
         """Test getting all bookmarks when cache is invalid."""
+        # Mock pinboard.Bookmark objects
+        mock_bookmarks = []
+        for data in mock_pinboard_data:
+            mock_bookmark = Mock()
+            mock_bookmark.url = data["href"]
+            mock_bookmark.description = data["description"]
+            mock_bookmark.extended = data["extended"]
+            mock_bookmark.tags = data["tags"].split() if data["tags"] else []
+            # Mock datetime
+            from datetime import datetime
+            mock_bookmark.time = datetime.fromisoformat(data["time"].replace("Z", "+00:00"))
+            mock_bookmarks.append(mock_bookmark)
+        
         # Mock the pinboard client
         mock_pb = Mock()
-        mock_pb.posts.all.return_value = mock_pinboard_data
+        mock_pb.posts.recent.return_value = {"posts": mock_bookmarks}
         mock_pb.posts.update.return_value = {"update_time": "2024-01-15T10:30:00Z"}
         mock_pinboard_class.return_value = mock_pb
 
@@ -92,9 +105,17 @@ class TestPinboardClient:
     @patch("pinboard_mcp_server.client.pinboard.Pinboard")
     async def test_get_all_tags(self, mock_pinboard_class, valid_token, mock_tags_data):
         """Test getting all tags."""
+        # Mock pinboard.Tag objects (returns list of Tag objects, not dict)
+        mock_tag_objects = []
+        for tag_name, count in mock_tags_data.items():
+            mock_tag = Mock()
+            mock_tag.name = tag_name
+            mock_tag.count = count
+            mock_tag_objects.append(mock_tag)
+        
         # Mock the pinboard client
         mock_pb = Mock()
-        mock_pb.tags.get.return_value = mock_tags_data
+        mock_pb.tags.get.return_value = mock_tag_objects
         mock_pinboard_class.return_value = mock_pb
 
         client = PinboardClient(valid_token)

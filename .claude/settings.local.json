@@ -25,7 +25,9 @@
       "WebFetch(domain:gofastmcp.com)",
       "Bash(PINBOARD_TOKEN=\"rufous:42081681E2CA093FAF0B\" PYTHONPATH=\"./src\" timeout 5s /Users/ross/.venvs/pinboard-bookmarks-mcp-server/bin/python ./src/pinboard_mcp_server/main.py)",
       "Bash(python -m pytest tests/test_main.py -v)",
-      "Bash(python -m pytest -v --tb=no -q)"
+      "Bash(python -m pytest -v --tb=no -q)",
+      "Bash(PINBOARD_TOKEN=\"rufous:42081681E2CA093FAF0B\" PYTHONPATH=\"./src\" /Users/ross/.venvs/pinboard-bookmarks-mcp-server/bin/python debug_api.py)",
+      "Bash(PINBOARD_TOKEN=\"rufous:42081681E2CA093FAF0B\" /Users/ross/.venvs/pinboard-bookmarks-mcp-server/bin/python debug_posts_format.py)"
     ],
     "deny": []
   }
