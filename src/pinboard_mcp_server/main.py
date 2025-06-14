@@ -18,7 +18,7 @@ client: PinboardClient
 
 
 @mcp.tool
-def search_bookmarks(
+async def search_bookmarks(
     query: str,
     limit: int = 20
 ) -> dict[str, Any]:
@@ -31,8 +31,7 @@ def search_bookmarks(
     if not 1 <= limit <= 100:
         raise ValueError("Limit must be between 1 and 100")
     
-    import asyncio
-    bookmarks = asyncio.run(client.search_bookmarks(query=query, limit=limit))
+    bookmarks = await client.search_bookmarks(query=query, limit=limit)
     
     return {
         "bookmarks": [bookmark.model_dump() for bookmark in bookmarks],
@@ -42,7 +41,7 @@ def search_bookmarks(
 
 
 @mcp.tool  
-def list_recent_bookmarks(
+async def list_recent_bookmarks(
     days: int = 7,
     limit: int = 20
 ) -> dict[str, Any]:
@@ -57,8 +56,7 @@ def list_recent_bookmarks(
     if not 1 <= limit <= 100:
         raise ValueError("Limit must be between 1 and 100")
     
-    import asyncio
-    bookmarks = asyncio.run(client.get_recent_bookmarks(days=days, limit=limit))
+    bookmarks = await client.get_recent_bookmarks(days=days, limit=limit)
     
     return {
         "bookmarks": [bookmark.model_dump() for bookmark in bookmarks],
@@ -68,7 +66,7 @@ def list_recent_bookmarks(
 
 
 @mcp.tool
-def list_bookmarks_by_tags(
+async def list_bookmarks_by_tags(
     tags: list[str],
     from_date: str | None = None,
     to_date: str | None = None,
@@ -102,13 +100,12 @@ def list_bookmarks_by_tags(
         except ValueError:
             raise ValueError("to_date must be in ISO format (YYYY-MM-DD)")
     
-    import asyncio
-    bookmarks = asyncio.run(client.get_bookmarks_by_tags(
+    bookmarks = await client.get_bookmarks_by_tags(
         tags=tags,
         from_date=from_dt,
         to_date=to_dt,
         limit=limit
-    ))
+    )
     
     return {
         "bookmarks": [bookmark.model_dump() for bookmark in bookmarks],
@@ -120,10 +117,9 @@ def list_bookmarks_by_tags(
 
 
 @mcp.tool
-def list_tags() -> list[dict[str, Any]]:
+async def list_tags() -> list[dict[str, Any]]:
     """List all tags with their usage counts."""
-    import asyncio
-    tags = asyncio.run(client.get_all_tags())
+    tags = await client.get_all_tags()
     
     return [tag.model_dump() for tag in tags]
 
