@@ -58,9 +58,12 @@ class TestPinboardClient:
             mock_bookmark.tags = data["tags"].split() if data["tags"] else []
             # Mock datetime
             from datetime import datetime
-            mock_bookmark.time = datetime.fromisoformat(data["time"].replace("Z", "+00:00"))
+
+            mock_bookmark.time = datetime.fromisoformat(
+                data["time"].replace("Z", "+00:00")
+            )
             mock_bookmarks.append(mock_bookmark)
-        
+
         # Mock the pinboard client
         mock_pb = Mock()
         mock_pb.posts.recent.return_value = {"posts": mock_bookmarks}
@@ -112,7 +115,7 @@ class TestPinboardClient:
             mock_tag.name = tag_name
             mock_tag.count = count
             mock_tag_objects.append(mock_tag)
-        
+
         # Mock the pinboard client
         mock_pb = Mock()
         mock_pb.tags.get.return_value = mock_tag_objects

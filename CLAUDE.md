@@ -61,3 +61,116 @@ Common commands:
 - Use `posts/all` ONLY with additional parameters like `tag=` or `fromdt=` to filter results
 - Always implement pagination and limits when possible
 - Current implementation needs refactoring to avoid full dataset downloads
+
+## Using FastMCP
+
+### 1. Tool Registration: Use @mcp.tool Decorators, NOT Factory Functions
+
+**WRONG** ❌ (What we initially tried):
+```python
+def search_bookmarks(client: PinboardClient):
+    async def _search_bookmarks(params: SearchBookmarksParams, context: Context) -> SearchResult:
+        # tool implementation
+        pass
+    return _search_bookmarks
+
+# Register tools
+mcp.add_tool(search_bookmarks(client))
+```
+
+**RIGHT** ✅ (What actually works):
+```python
+@mcp.tool
+async def search_bookmarks(query: str, limit: int = 20) -> dict[str, Any]:
+    """Search bookmarks by query string across titles, notes, and tags."""
+    bookmarks = await client.search_bookmarks(query=query, limit=limit)
+    return {
+        "bookmarks": [bookmark.model_dump() for bookmark in bookmarks],
+        "total": len(bookmarks),
+        "query": query
+    }
+```
+
+**Why this matters:**
+- FastMCP 2.0 requires the `@mcp.tool` decorator pattern from https://gofastmcp.com/servers/tools
+- Factory functions create objects without the `name` attribute that FastMCP expects
+- The decorator automatically handles parameter parsing and validation
+- Parameters are passed directly to the function, not wrapped in objects
+
+### 2. Async vs Sync: NEVER Use asyncio.run() Inside MCP Tools
+
+**WRONG** ❌ (Causes "Already running asyncio in this thread"):
+```python
+@mcp.tool
+async def search_bookmarks(query: str) -> dict[str, Any]:
+    # This breaks because MCP server already has an event loop running
+    bookmarks = asyncio.run(client.search_bookmarks(query))
+    return {"bookmarks": bookmarks}
+```
+
+**RIGHT** ✅ (Use await in async functions):
+```python
+@mcp.tool
+async def search_bookmarks(query: str) -> dict[str, Any]:
+    # Use await since we're already in an async context
+    bookmarks = await client.search_bookmarks(query)
+    return {"bookmarks": [bookmark.model_dump() for bookmark in bookmarks]}
+```
+
+**Why this matters:**
+- MCP servers run inside an existing asyncio event loop
+- `asyncio.run()` tries to create a new event loop, which conflicts
+- Use `await` for async operations within MCP tools
+- Make all MCP tool functions `async` if they need to call async APIs
+
+### 3. Return Types: Use dict[str, Any], Not Custom Pydantic Models
+
+**WRONG** ❌ (MCP can't serialize custom objects):
+```python
+@mcp.tool
+async def search_bookmarks(query: str) -> SearchResult:
+    bookmarks = await client.search_bookmarks(query)
+    return SearchResult(bookmarks=bookmarks, query=query, total=len(bookmarks))
+```
+
+**RIGHT** ✅ (Return serializable dictionaries):
+```python
+@mcp.tool
+async def search_bookmarks(query: str) -> dict[str, Any]:
+    bookmarks = await client.search_bookmarks(query)
+    return {
+        "bookmarks": [bookmark.model_dump() for bookmark in bookmarks],
+        "total": len(bookmarks),
+        "query": query
+    }
+```
+
+**Why this matters:**
+- MCP expects JSON-serializable return values
+- Use `.model_dump()` on Pydantic models to convert to dictionaries
+- Return plain dictionaries, lists, and primitive types from MCP tools
+
+### 4. Error Symptoms and Solutions
+
+**"'function' object has no attribute 'name'"**
+- Caused by: Using factory functions instead of `@mcp.tool` decorators
+- Solution: Switch to the decorator pattern
+
+**"Already running asyncio in this thread"**
+- Caused by: Using `asyncio.run()` inside MCP tools
+- Solution: Use `await` instead, make tool functions `async`
+
+**"HTTP 500 errors from Pinboard API"**
+- Caused by: Using `posts.all()` which downloads massive amounts of data
+- Solution: Use `posts.recent(count=100)` or filtered `posts.all()` calls
+
+**"'list' object has no attribute 'items'"**
+- Caused by: Expecting dict when API returns list (e.g., tags API)
+- Solution: Check API response format and handle both list and dict returns
+
+### 5. Testing with FastMCP
+
+- Mock the client, not the MCP tools themselves
+- Test client methods directly in integration tests
+- Use `@patch("pinboard_mcp_server.client.pinboard.Pinboard")` to mock the underlying API
+- Convert test data to match pinboard.py object format (not raw dicts)

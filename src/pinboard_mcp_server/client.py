@@ -36,28 +36,29 @@ class PinboardClient:
 
         # Thread pool for running sync pinboard.py calls
         self._executor = ThreadPoolExecutor(max_workers=1)
-    
+
     def _convert_pinboard_bookmark(self, pb_bookmark) -> dict[str, Any]:
         """Convert pinboard.Bookmark object to dict format our models expect."""
         # pinboard.Bookmark has: url, description, extended, tags (list), time (datetime)
         # We need: href, description, extended, tags (space-separated string), time (ISO string)
-        
-        tags_list = getattr(pb_bookmark, 'tags', [])
+
+        tags_list = getattr(pb_bookmark, "tags", [])
         # Remove empty tags and join with spaces
-        tags_str = ' '.join([tag for tag in tags_list if tag.strip()])
-        
-        time_obj = getattr(pb_bookmark, 'time', None)
-        if time_obj and hasattr(time_obj, 'isoformat'):
-            time_str = time_obj.isoformat() + 'Z'
+        tags_str = " ".join([tag for tag in tags_list if tag.strip()])
+
+        time_obj = getattr(pb_bookmark, "time", None)
+        if time_obj and hasattr(time_obj, "isoformat"):
+            # Convert to UTC and format as Z-suffix (no double timezone conversion)
+            time_str = time_obj.isoformat().replace("+00:00", "") + "Z"
         else:
-            time_str = '2024-01-01T00:00:00Z'
-        
+            time_str = "2024-01-01T00:00:00Z"
+
         return {
             "href": pb_bookmark.url,
             "description": pb_bookmark.description,
-            "extended": getattr(pb_bookmark, 'extended', ''),
+            "extended": getattr(pb_bookmark, "extended", ""),
             "tags": tags_str,
-            "time": time_str
+            "time": time_str,
         }
 
     def _rate_limit_sync(self) -> None:
@@ -112,10 +113,12 @@ class PinboardClient:
         result: Any = await self._run_in_executor(_get_posts)
 
         # posts.recent() returns a dict with 'posts' key containing list of Bookmark objects
-        posts_list = result['posts'] if isinstance(result, dict) and 'posts' in result else []
-        
+        posts_list = (
+            result["posts"] if isinstance(result, dict) and "posts" in result else []
+        )
+
         self._bookmark_cache = [
-            Bookmark.from_pinboard(self._convert_pinboard_bookmark(post)) 
+            Bookmark.from_pinboard(self._convert_pinboard_bookmark(post))
             for post in posts_list
         ]
         self._cache_valid_until = datetime.now() + timedelta(hours=1)
@@ -130,9 +133,7 @@ class PinboardClient:
         result: Any = await self._run_in_executor(_get_tags)
 
         # The result is a list of Tag objects with .name and .count attributes
-        self._tag_cache = [
-            TagCount(tag=tag.name, count=tag.count) for tag in result
-        ]
+        self._tag_cache = [TagCount(tag=tag.name, count=tag.count) for tag in result]
 
     async def get_all_bookmarks(self) -> list[Bookmark]:
         """Get all bookmarks, using cache when possible."""

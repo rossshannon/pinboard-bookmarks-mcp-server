@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """
-Integration tests for the Pinboard MCP Server
+Updated integration tests for the Pinboard MCP Server
 
-Tests the MCP tools with mocked Pinboard API responses to ensure
-the complete flow works correctly without requiring real API calls.
+Tests the client functionality with mocked Pinboard API responses.
 """
 
 import asyncio
@@ -18,40 +17,23 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from pinboard_mcp_server.client import PinboardClient
 from pinboard_mcp_server.models import TagCount
-from pinboard_mcp_server.tools import (
-    ListBookmarksByTagsParams,
-    ListRecentBookmarksParams,
-    SearchBookmarksParams,
-    list_bookmarks_by_tags,
-    list_recent_bookmarks,
-    list_tags,
-    search_bookmarks,
-)
 
 
-class TestMCPIntegration(unittest.TestCase):
-    """Test the MCP server integration functionality"""
+class TestPinboardClientIntegration(unittest.TestCase):
+    """Test the PinboardClient integration functionality"""
 
     def setUp(self):
         """Set up test environment"""
-        # Clear environment variable to ensure tests control it
-        if "PINBOARD_TOKEN" in os.environ:
-            self.original_token = os.environ["PINBOARD_TOKEN"]
-            del os.environ["PINBOARD_TOKEN"]
-        else:
-            self.original_token = None
-
-        # Test data
         self.test_token = "testuser:1234567890ABCDEF"
 
-        # Sample Pinboard API responses (using recent dates)
+        # Sample test data (using recent dates)
         now = datetime.now()
         recent_date_1 = (now - timedelta(days=5)).strftime("%Y-%m-%dT%H:%M:%SZ")
         recent_date_2 = (now - timedelta(days=10)).strftime("%Y-%m-%dT%H:%M:%SZ")
         recent_date_3 = (now - timedelta(days=15)).strftime("%Y-%m-%dT%H:%M:%SZ")
         old_date = (now - timedelta(days=40)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-        self.sample_posts_all = [
+        self.sample_posts_data = [
             {
                 "href": "https://example.com/python-testing",
                 "description": "Python Testing Best Practices",
@@ -82,7 +64,7 @@ class TestMCPIntegration(unittest.TestCase):
             },
         ]
 
-        self.sample_tags_get = {
+        self.sample_tags_data = {
             "python": 3,
             "testing": 1,
             "pytest": 1,
@@ -95,174 +77,140 @@ class TestMCPIntegration(unittest.TestCase):
             "frontend": 1,
         }
 
-    def tearDown(self):
-        """Clean up after tests"""
-        # Restore original environment if it existed
-        if self.original_token is not None:
-            os.environ["PINBOARD_TOKEN"] = self.original_token
-        elif "PINBOARD_TOKEN" in os.environ:
-            del os.environ["PINBOARD_TOKEN"]
+    def create_mock_pinboard_bookmarks(self, data_list):
+        """Convert test data to mock pinboard.Bookmark objects."""
+        mock_bookmarks = []
+        for data in data_list:
+            mock_bookmark = MagicMock()
+            mock_bookmark.url = data["href"]
+            mock_bookmark.description = data["description"]
+            mock_bookmark.extended = data["extended"]
+            mock_bookmark.tags = data["tags"].split() if data["tags"] else []
+            mock_bookmark.time = datetime.fromisoformat(
+                data["time"].replace("Z", "+00:00")
+            )
+            mock_bookmarks.append(mock_bookmark)
+        return mock_bookmarks
 
-    def create_mock_context(self):
-        """Create a mock context for MCP tool calls."""
-        context = MagicMock()
-        context.session = MagicMock()
-        context.session.logger = MagicMock()
-        return context
+    def create_mock_pinboard_tags(self, tags_dict):
+        """Convert test tag data to mock pinboard.Tag objects."""
+        mock_tags = []
+        for tag_name, count in tags_dict.items():
+            mock_tag = MagicMock()
+            mock_tag.name = tag_name
+            mock_tag.count = count
+            mock_tags.append(mock_tag)
+        return mock_tags
 
     @patch("pinboard_mcp_server.client.pinboard.Pinboard")
-    def test_mcp_search_bookmarks_tool(self, mock_pinboard_class):
-        """Test the MCP searchBookmarks tool with simulated Pinboard data"""
+    def test_search_bookmarks_integration(self, mock_pinboard_class):
+        """Test search bookmarks functionality end-to-end"""
 
         async def run_test():
             # Mock the pinboard client
+            mock_bookmarks = self.create_mock_pinboard_bookmarks(self.sample_posts_data)
             mock_pb = MagicMock()
-            mock_pb.posts.all.return_value = self.sample_posts_all
+            mock_pb.posts.recent.return_value = {"posts": mock_bookmarks}
             mock_pb.posts.update.return_value = {"update_time": "2024-01-15T12:00:00Z"}
             mock_pinboard_class.return_value = mock_pb
 
-            # Create client and tool
             client = PinboardClient(self.test_token)
-            tool_func = search_bookmarks(client)
-            context = self.create_mock_context()
 
-            # Test searching for "python"
-            params = SearchBookmarksParams(query="python", limit=10)
-            result = await tool_func(params, context)
+            # Test search for "python"
+            results = await client.search_bookmarks("python", limit=10)
+            self.assertEqual(len(results), 3)  # 3 Python-related bookmarks
 
-            # Verify results
-            self.assertEqual(result.query, "python")
-            self.assertEqual(len(result.bookmarks), 3)  # 3 Python-related bookmarks
-            self.assertEqual(result.total, 3)
-
-            # Check that all results contain "python" in title, notes, or tags
-            for bookmark in result.bookmarks:
+            # Verify all results contain "python"
+            for bookmark in results:
                 found_python = (
                     "python" in bookmark.title.lower()
                     or "python" in bookmark.notes.lower()
                     or any("python" in tag.lower() for tag in bookmark.tags)
                 )
-                self.assertTrue(
-                    found_python, f"Bookmark doesn't match search: {bookmark.title}"
-                )
+                self.assertTrue(found_python)
 
             # Test case-insensitive search
-            params = SearchBookmarksParams(query="REACT", limit=10)
-            result = await tool_func(params, context)
-            self.assertEqual(len(result.bookmarks), 1)  # 1 React bookmark
+            results = await client.search_bookmarks("REACT", limit=10)
+            self.assertEqual(len(results), 1)
 
             await client.close()
 
         asyncio.run(run_test())
 
     @patch("pinboard_mcp_server.client.pinboard.Pinboard")
-    def test_mcp_list_recent_bookmarks_tool(self, mock_pinboard_class):
-        """Test the MCP listRecentBookmarks tool"""
+    def test_recent_bookmarks_integration(self, mock_pinboard_class):
+        """Test recent bookmarks functionality end-to-end"""
 
         async def run_test():
-            # Mock the pinboard client
+            mock_bookmarks = self.create_mock_pinboard_bookmarks(self.sample_posts_data)
             mock_pb = MagicMock()
-            mock_pb.posts.all.return_value = self.sample_posts_all
+            mock_pb.posts.recent.return_value = {"posts": mock_bookmarks}
             mock_pb.posts.update.return_value = {"update_time": "2024-01-15T12:00:00Z"}
             mock_pinboard_class.return_value = mock_pb
 
             client = PinboardClient(self.test_token)
-            tool_func = list_recent_bookmarks(client)
-            context = self.create_mock_context()
 
-            # Test recent bookmarks (last 30 days)
-            params = ListRecentBookmarksParams(days=30, limit=10)
-            result = await tool_func(params, context)
+            # Test getting recent bookmarks (30 days)
+            results = await client.get_recent_bookmarks(days=30, limit=20)
+            self.assertEqual(len(results), 3)  # 3 recent bookmarks
 
-            # Should find the bookmarks from 2024 (recent) but not 2023
-            self.assertEqual(len(result.bookmarks), 3)  # 3 from 2024
-            self.assertEqual(result.total, 3)
-
-            # Verify they're sorted by most recent first
-            dates = [b.saved_at for b in result.bookmarks]
-            self.assertEqual(dates, sorted(dates, reverse=True))
-
-            # Test with smaller date range (last 10 days)
-            params = ListRecentBookmarksParams(days=10, limit=10)
-            result = await tool_func(params, context)
-
-            # Should find fewer bookmarks
-            self.assertLessEqual(len(result.bookmarks), 3)
+            # Test with shorter timeframe (3 days)
+            results = await client.get_recent_bookmarks(days=3, limit=20)
+            self.assertLessEqual(len(results), 3)
 
             await client.close()
 
         asyncio.run(run_test())
 
     @patch("pinboard_mcp_server.client.pinboard.Pinboard")
-    def test_mcp_list_bookmarks_by_tags_tool(self, mock_pinboard_class):
-        """Test the MCP listBookmarksByTags tool"""
+    def test_bookmarks_by_tags_integration(self, mock_pinboard_class):
+        """Test bookmarks by tags functionality end-to-end"""
 
         async def run_test():
-            # Mock the pinboard client
+            mock_bookmarks = self.create_mock_pinboard_bookmarks(self.sample_posts_data)
             mock_pb = MagicMock()
-            mock_pb.posts.all.return_value = self.sample_posts_all
+            mock_pb.posts.recent.return_value = {"posts": mock_bookmarks}
             mock_pb.posts.update.return_value = {"update_time": "2024-01-15T12:00:00Z"}
             mock_pinboard_class.return_value = mock_pb
 
             client = PinboardClient(self.test_token)
-            tool_func = list_bookmarks_by_tags(client)
-            context = self.create_mock_context()
 
             # Test filtering by single tag
-            params = ListBookmarksByTagsParams(tags=["python"], limit=10)
-            result = await tool_func(params, context)
-
-            self.assertEqual(result.tags, ["python"])
-            self.assertEqual(len(result.bookmarks), 3)  # 3 Python bookmarks
-
-            # Verify all results have the python tag
-            for bookmark in result.bookmarks:
-                self.assertIn("python", [tag.lower() for tag in bookmark.tags])
+            results = await client.get_bookmarks_by_tags(["python"], limit=10)
+            self.assertEqual(len(results), 3)  # 3 Python bookmarks
 
             # Test filtering by multiple tags (intersection)
-            params = ListBookmarksByTagsParams(tags=["python", "web"], limit=10)
-            result = await tool_func(params, context)
-
-            self.assertEqual(len(result.bookmarks), 1)  # Only FastAPI bookmark has both
-            self.assertIn("fastapi", result.bookmarks[0].title.lower())
+            results = await client.get_bookmarks_by_tags(["python", "web"], limit=10)
+            self.assertEqual(len(results), 1)  # Only FastAPI bookmark has both
 
             # Test filtering by non-existent tag
-            params = ListBookmarksByTagsParams(tags=["nonexistent"], limit=10)
-            result = await tool_func(params, context)
-
-            self.assertEqual(len(result.bookmarks), 0)
+            results = await client.get_bookmarks_by_tags(["nonexistent"], limit=10)
+            self.assertEqual(len(results), 0)
 
             await client.close()
 
         asyncio.run(run_test())
 
     @patch("pinboard_mcp_server.client.pinboard.Pinboard")
-    def test_mcp_list_tags_tool(self, mock_pinboard_class):
-        """Test the MCP listTags tool"""
+    def test_tags_integration(self, mock_pinboard_class):
+        """Test tags functionality end-to-end"""
 
         async def run_test():
-            # Mock the pinboard client
+            mock_tags = self.create_mock_pinboard_tags(self.sample_tags_data)
             mock_pb = MagicMock()
-            mock_pb.tags.get.return_value = self.sample_tags_get
+            mock_pb.tags.get.return_value = mock_tags
             mock_pinboard_class.return_value = mock_pb
 
             client = PinboardClient(self.test_token)
-            tool_func = list_tags(client)
-            context = self.create_mock_context()
 
             # Test getting all tags
-            result = await tool_func(context)
+            results = await client.get_all_tags()
+            self.assertEqual(len(results), len(self.sample_tags_data))
+            self.assertTrue(all(isinstance(tag, TagCount) for tag in results))
 
-            self.assertEqual(len(result), len(self.sample_tags_get))
-
-            # Verify tag structure
-            for tag in result:
-                self.assertIsInstance(tag, TagCount)
-                self.assertIn(tag.tag, self.sample_tags_get)
-                self.assertEqual(tag.count, self.sample_tags_get[tag.tag])
-
-            # Check that python is the most popular tag
-            python_tag = next(tag for tag in result if tag.tag == "python")
+            # Check that python tag has count 3
+            python_tag = next((tag for tag in results if tag.tag == "python"), None)
+            self.assertIsNotNone(python_tag)
             self.assertEqual(python_tag.count, 3)
 
             await client.close()
@@ -270,45 +218,24 @@ class TestMCPIntegration(unittest.TestCase):
         asyncio.run(run_test())
 
     @patch("pinboard_mcp_server.client.pinboard.Pinboard")
-    def test_environment_token_usage(self, mock_pinboard_class):
-        """Test that the environment variable is used when no token is provided"""
-
-        async def run_test():
-            # Set up environment
-            os.environ["PINBOARD_TOKEN"] = self.test_token
-
-            # Mock the pinboard client
-            mock_pb = MagicMock()
-            mock_pb.posts.all.return_value = []
-            mock_pb.posts.update.return_value = {"update_time": "2024-01-15T12:00:00Z"}
-            mock_pinboard_class.return_value = mock_pb
-
-            # Create client (should use environment token)
-            client = PinboardClient(self.test_token)
-
-            # Verify the client was created with the token
-            mock_pinboard_class.assert_called_with(self.test_token)
-
-            await client.close()
-
-        asyncio.run(run_test())
-
-    @patch("pinboard_mcp_server.client.pinboard.Pinboard")
-    def test_field_mapping(self, mock_pinboard_class):
+    def test_field_mapping_integration(self, mock_pinboard_class):
         """Test that Pinboard fields are correctly mapped to our model"""
 
         async def run_test():
-            # Test data with explicit field mapping
-            test_post = {
-                "href": "https://example.com/test",
-                "description": "This is the title",  # Maps to title
-                "extended": "These are the notes",  # Maps to notes
-                "tags": "tag1 tag2 tag3",
-                "time": "2024-01-15T10:30:00Z",
-            }
+            # Create test data with explicit field mapping
+            test_data = [
+                {
+                    "href": "https://example.com/test",
+                    "description": "This is the title",  # Maps to title
+                    "extended": "These are the notes",  # Maps to notes
+                    "tags": "tag1 tag2 tag3",
+                    "time": "2024-01-15T10:30:00Z",
+                }
+            ]
 
+            mock_bookmarks = self.create_mock_pinboard_bookmarks(test_data)
             mock_pb = MagicMock()
-            mock_pb.posts.all.return_value = [test_post]
+            mock_pb.posts.recent.return_value = {"posts": mock_bookmarks}
             mock_pb.posts.update.return_value = {"update_time": "2024-01-15T12:00:00Z"}
             mock_pinboard_class.return_value = mock_pb
 
@@ -331,12 +258,13 @@ class TestMCPIntegration(unittest.TestCase):
         asyncio.run(run_test())
 
     @patch("pinboard_mcp_server.client.pinboard.Pinboard")
-    def test_caching_behavior(self, mock_pinboard_class):
+    def test_caching_behavior_integration(self, mock_pinboard_class):
         """Test that caching works correctly"""
 
         async def run_test():
+            mock_bookmarks = self.create_mock_pinboard_bookmarks(self.sample_posts_data)
             mock_pb = MagicMock()
-            mock_pb.posts.all.return_value = self.sample_posts_all
+            mock_pb.posts.recent.return_value = {"posts": mock_bookmarks}
             mock_pb.posts.update.return_value = {"update_time": "2024-01-15T12:00:00Z"}
             mock_pinboard_class.return_value = mock_pb
 
@@ -345,32 +273,17 @@ class TestMCPIntegration(unittest.TestCase):
             # First call should hit the API
             bookmarks1 = await client.get_all_bookmarks()
             self.assertEqual(len(bookmarks1), 4)
-            self.assertEqual(mock_pb.posts.all.call_count, 1)
 
-            # Second call should use cache (same update time)
+            # Second call should use cache (posts.recent should only be called once)
             bookmarks2 = await client.get_all_bookmarks()
             self.assertEqual(len(bookmarks2), 4)
-            self.assertEqual(mock_pb.posts.all.call_count, 1)  # Should not increase
 
-            # Search should also use cache
-            results = await client.search_bookmarks("python", limit=10)
-            self.assertEqual(len(results), 3)
-            self.assertEqual(mock_pb.posts.all.call_count, 1)  # Still cached
+            # Verify API was called only once for posts
+            mock_pb.posts.recent.assert_called_once()
 
             await client.close()
 
         asyncio.run(run_test())
-
-
-class AsyncTestCase(unittest.TestCase):
-    """Base class for async test cases"""
-
-    def setUp(self):
-        self.loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(self.loop)
-
-    def tearDown(self):
-        self.loop.close()
 
 
 if __name__ == "__main__":

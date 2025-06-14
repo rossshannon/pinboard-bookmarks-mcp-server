@@ -1,7 +1,7 @@
 """MCP tools for Pinboard bookmark operations."""
 
 from datetime import datetime
-from typing import Any, Callable, Optional
+from typing import Any, Optional
 
 from fastmcp import Context  # type: ignore
 from pydantic import BaseModel, Field
@@ -49,7 +49,7 @@ class ListBookmarksByTagsParams(BaseModel):
 
 def search_bookmarks(client: PinboardClient) -> Any:
     """Create the searchBookmarks MCP tool."""
-    
+
     async def _search_bookmarks(
         params: SearchBookmarksParams, context: Context
     ) -> SearchResult:
