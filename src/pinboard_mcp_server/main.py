@@ -10,7 +10,7 @@ from fastmcp import FastMCP  # type: ignore
 from pinboard_mcp_server.client import PinboardClient
 
 # Initialize FastMCP server
-mcp = FastMCP("Pinboard MCP Server")
+mcp: FastMCP = FastMCP("Pinboard MCP Server")
 
 # Global client - will be initialized in main()
 client: PinboardClient
