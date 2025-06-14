@@ -30,6 +30,7 @@ class PinboardClient:
         self._tag_cache: Optional[list[TagCount]] = None
         self._last_update_time: Optional[datetime] = None
         self._cache_valid_until: Optional[datetime] = None
+        self._has_expanded_data: bool = False
 
         # LRU cache for query results
         self._query_cache: LRUCache = LRUCache(maxsize=1000)
@@ -101,27 +102,44 @@ class PinboardClient:
             # If we can't check, assume cache is invalid
             return False
 
-    async def _refresh_bookmark_cache(self) -> None:
-        """Refresh the bookmark cache from Pinboard API using recent posts."""
+    async def _refresh_bookmark_cache(self, expand_search: bool = False) -> None:
+        """Refresh the bookmark cache from Pinboard API.
+        
+        Args:
+            expand_search: If True, get more bookmarks using posts.all() with date filter.
+                          If False, get only recent 100 bookmarks.
+        """
 
         def _get_posts() -> Any:
             self._rate_limit_sync()
-            # Use posts.recent instead of posts.all to avoid downloading everything
-            # This gets the most recent 100 posts max
-            return self._pb.posts.recent(count=100)
+            if expand_search:
+                # Get bookmarks from the last 2 years to balance completeness vs performance
+                from_date = datetime.now() - timedelta(days=730)
+                return self._pb.posts.all(fromdt=from_date.strftime('%Y-%m-%dT%H:%M:%SZ'))
+            else:
+                # Use posts.recent for initial cache - gets most recent 100 posts
+                return self._pb.posts.recent(count=100)
 
         result: Any = await self._run_in_executor(_get_posts)
 
-        # posts.recent() returns a dict with 'posts' key containing list of Bookmark objects
-        posts_list = (
-            result["posts"] if isinstance(result, dict) and "posts" in result else []
-        )
+        # Handle both posts.recent() and posts.all() response formats
+        if expand_search:
+            # posts.all() returns a list directly
+            posts_list = result if isinstance(result, list) else []
+        else:
+            # posts.recent() returns a dict with 'posts' key
+            posts_list = (
+                result["posts"] if isinstance(result, dict) and "posts" in result else []
+            )
 
         self._bookmark_cache = [
             Bookmark.from_pinboard(self._convert_pinboard_bookmark(post))
             for post in posts_list
         ]
         self._cache_valid_until = datetime.now() + timedelta(hours=1)
+        
+        # Mark whether we have expanded data
+        self._has_expanded_data = expand_search
 
     async def _refresh_tag_cache(self) -> None:
         """Refresh the tag cache from Pinboard API."""
@@ -135,10 +153,19 @@ class PinboardClient:
         # The result is a list of Tag objects with .name and .count attributes
         self._tag_cache = [TagCount(tag=tag.name, count=tag.count) for tag in result]
 
-    async def get_all_bookmarks(self) -> list[Bookmark]:
-        """Get all bookmarks, using cache when possible."""
+    async def get_all_bookmarks(self, expand_if_needed: bool = False) -> list[Bookmark]:
+        """Get bookmarks, using cache when possible.
+        
+        Args:
+            expand_if_needed: If True, will expand search to get more bookmarks
+                            when initial cache is empty or insufficient.
+        """
         if not await self._check_cache_validity() or self._bookmark_cache is None:
             await self._refresh_bookmark_cache()
+
+        # If we need expanded data and don't have it yet, fetch it
+        if expand_if_needed and not self._has_expanded_data:
+            await self._refresh_bookmark_cache(expand_search=True)
 
         return self._bookmark_cache or []
 
@@ -156,6 +183,7 @@ class PinboardClient:
         if cache_key in self._query_cache:
             return self._query_cache[cache_key]
 
+        # First try with recent bookmarks
         bookmarks = await self.get_all_bookmarks()
         query_lower = query.lower()
 
@@ -170,6 +198,19 @@ class PinboardClient:
                 matches.append(bookmark)
                 if len(matches) >= limit:
                     break
+
+        # If no matches found and we haven't expanded yet, try with more data
+        if not matches and not self._has_expanded_data:
+            bookmarks = await self.get_all_bookmarks(expand_if_needed=True)
+            for bookmark in bookmarks:
+                if (
+                    query_lower in bookmark.title.lower()
+                    or query_lower in bookmark.notes.lower()
+                    or any(query_lower in tag.lower() for tag in bookmark.tags)
+                ):
+                    matches.append(bookmark)
+                    if len(matches) >= limit:
+                        break
 
         # Cache the result
         self._query_cache[cache_key] = matches
@@ -210,6 +251,7 @@ class PinboardClient:
         if cache_key in self._query_cache:
             return self._query_cache[cache_key]
 
+        # First try with recent bookmarks
         bookmarks = await self.get_all_bookmarks()
         tag_set = {tag.lower() for tag in tags}
 
@@ -229,6 +271,23 @@ class PinboardClient:
                 matches.append(bookmark)
                 if len(matches) >= limit:
                     break
+
+        # If no matches found and we haven't expanded yet, try with more data
+        if not matches and not self._has_expanded_data:
+            bookmarks = await self.get_all_bookmarks(expand_if_needed=True)
+            for bookmark in bookmarks:
+                bookmark_tags = {tag.lower() for tag in bookmark.tags}
+
+                if tag_set.issubset(bookmark_tags):
+                    bookmark_date = bookmark.saved_at.replace(tzinfo=None)
+                    if from_date and bookmark_date < from_date:
+                        continue
+                    if to_date and bookmark_date > to_date:
+                        continue
+
+                    matches.append(bookmark)
+                    if len(matches) >= limit:
+                        break
 
         # Sort by most recent first
         matches.sort(key=lambda b: b.saved_at, reverse=True)

@@ -60,7 +60,15 @@ Common commands:
 - Use `posts/recent` for recent bookmarks (limited to ~100 posts)
 - Use `posts/all` ONLY with additional parameters like `tag=` or `fromdt=` to filter results
 - Always implement pagination and limits when possible
-- Current implementation needs refactoring to avoid full dataset downloads
+
+## Smart Search Implementation
+
+The client now implements a two-tier search strategy:
+
+1. **Initial Search**: Uses `posts.recent(count=100)` to get the most recent 100 bookmarks for fast searches
+2. **Expanded Search**: If no results found, automatically uses `posts.all(fromdt=...)` with a 2-year filter to search older bookmarks
+
+This balances performance (fast searches of recent content) with completeness (can find older bookmarks when needed). The expanded search is cached for 1 hour to avoid repeated API calls.
 
 ## Using FastMCP
 
