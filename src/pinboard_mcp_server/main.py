@@ -1,7 +1,7 @@
 """Main entry point for the Pinboard MCP Server."""
 
-import asyncio
 import os
+import sys
 from typing import Any
 
 from fastmcp import FastMCP  # type: ignore
@@ -22,7 +22,8 @@ def create_server() -> Any:
     # Get Pinboard API token
     token = os.getenv("PINBOARD_TOKEN")
     if not token:
-        raise ValueError("PINBOARD_TOKEN environment variable is required")
+        print("Error: PINBOARD_TOKEN environment variable is required", file=sys.stderr)
+        sys.exit(1)
 
     # Initialize Pinboard client
     client = PinboardClient(token)
@@ -36,17 +37,17 @@ def create_server() -> Any:
     return server
 
 
-async def main() -> None:
+def main() -> None:
     """Main entry point."""
     try:
         server = create_server()
-        await server.run()
+        server.run()
     except KeyboardInterrupt:
-        print("\nServer stopped")
+        print("\nServer stopped", file=sys.stderr)
     except Exception as e:
-        print(f"Error starting server: {e}")
-        raise
+        print(f"Error starting server: {e}", file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
