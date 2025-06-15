@@ -8,7 +8,7 @@
 
 | **Project Name** | Pinboard MCP Server                                    |
 | ---------------- | ------------------------------------------------------ |
-| **Version**      | 0.2.0                                                  |
+| **Version**      | 1.0.0                                                  |
 | **Authors**      |                                                        |
 | **Last Updated** |                                                        |
 | **Stakeholders** | Product • Engineering • QA • DevOps • Security • Legal |

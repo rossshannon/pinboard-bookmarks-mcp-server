@@ -16,7 +16,7 @@ This server provides LLMs with the ability to search, filter, and retrieve bookm
 - **Smart caching** with LRU cache and automatic invalidation using `posts/update` endpoint
 - **Rate limiting** respects Pinboard's 3-second guideline between API calls
 - **Field mapping** converts Pinboard's legacy field names to intuitive ones (description→title, extended→notes)
-- **Comprehensive testing** with 87% code coverage and integration test harnesses
+- **Comprehensive testing** with integration test harnesses and CI validation
 
 ## Installation
 
