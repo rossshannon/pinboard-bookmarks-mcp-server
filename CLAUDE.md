@@ -40,6 +40,7 @@ Based on the PRD (docs/pinboard_mcp_server_prd.md), the system follows this desi
 - Never log Pinboard API tokens for security
 - All dates returned in ISO-8601 Zulu format
 - When introducing or upgrading dependencies, update the `pyproject.toml` file with the new version and run `poetry update` to update the lock file. Do a search online for appropriate version numbers rather than relying on your memory.
+- **Test Coverage Requirements**: The CI pipeline requires 75% test coverage to pass. Current coverage is around 64%. Missing coverage is primarily in `client.py` search methods and error handling paths. If coverage drops below 75%, either add more tests or lower the requirement in CI configuration.
 
 ## Virtual Environment
 
