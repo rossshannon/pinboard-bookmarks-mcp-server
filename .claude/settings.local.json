@@ -32,7 +32,10 @@
       "Bash(pip install:*)",
       "Bash(touch:*)",
       "Bash(pre-commit:*)",
-      "Bash(git checkout:*)"
+      "Bash(git checkout:*)",
+      "Bash(python:*)",
+      "Bash(grep:*)",
+      "Bash(pytest:*)"
     ],
     "deny": []
   }

@@ -140,3 +140,225 @@ class TestPinboardClient:
         with patch.object(client._executor, "shutdown") as mock_shutdown:
             await client.close()
             mock_shutdown.assert_called_once_with(wait=True)
+
+    @pytest.mark.asyncio
+    @patch("pinboard_mcp_server.client.pinboard.Pinboard")
+    async def test_search_bookmarks_with_exact_tag_match(
+        self, mock_pinboard_class, valid_token
+    ):
+        """Test search with exact tag match uses direct tag search."""
+        client = PinboardClient(valid_token)
+
+        # Mock tags.get() to return a tag that matches the query
+        mock_tags = [Mock(name="python", count=5), Mock(name="web", count=3)]
+        client._pb.tags.get.return_value = mock_tags
+
+        # Mock posts.all() for tag search
+        mock_posts = [
+            Mock(
+                url="https://example.com/1",
+                description="Python Guide",
+                extended="Notes",
+                tags=["python"],
+                time=Mock(isoformat=Mock(return_value="2024-01-01T00:00:00")),
+            )
+        ]
+        client._pb.posts.all.return_value = mock_posts
+
+        with patch.object(client, "get_all_bookmarks", return_value=[]):
+            with patch.object(
+                client, "get_all_tags", return_value=[TagCount(tag="python", count=5)]
+            ):
+                results = await client.search_bookmarks("python", limit=10)
+
+                # Should find results via tag search
+                assert len(results) == 1
+                assert results[0].title == "Python Guide"
+
+    @pytest.mark.asyncio
+    @patch("pinboard_mcp_server.client.pinboard.Pinboard")
+    async def test_search_bookmarks_with_expansion(
+        self, mock_pinboard_class, valid_token
+    ):
+        """Test search that triggers expansion when no initial matches."""
+        client = PinboardClient(valid_token)
+
+        # Mock initial empty bookmarks
+        with patch.object(client, "get_all_bookmarks") as mock_get_bookmarks:
+            with patch.object(client, "get_all_tags", return_value=[]):
+                # First call returns empty, second call (with expansion) returns results
+                mock_bookmark = Bookmark.from_pinboard(
+                    {
+                        "href": "https://example.com/expanded",
+                        "description": "Expanded Result",
+                        "extended": "Contains searchterm",
+                        "tags": "",
+                        "time": "2024-01-01T00:00:00Z",
+                    }
+                )
+                mock_get_bookmarks.side_effect = [[], [mock_bookmark]]
+
+                results = await client.search_bookmarks("searchterm", limit=10)
+
+                # Should find results after expansion
+                assert len(results) == 1
+                assert results[0].title == "Expanded Result"
+
+    @pytest.mark.asyncio
+    @patch("pinboard_mcp_server.client.pinboard.Pinboard")
+    async def test_search_bookmarks_tag_search_exception(
+        self, mock_pinboard_class, valid_token
+    ):
+        """Test search handles exceptions during tag search gracefully."""
+        client = PinboardClient(valid_token)
+
+        with patch.object(client, "get_all_bookmarks", return_value=[]):
+            with patch.object(
+                client, "get_all_tags", return_value=[TagCount(tag="python", count=5)]
+            ):
+                with patch.object(
+                    client, "_search_by_tag_direct", side_effect=Exception("API Error")
+                ):
+                    # Should not raise exception, should return empty results
+                    results = await client.search_bookmarks("python", limit=10)
+                    assert len(results) == 0
+
+    @pytest.mark.asyncio
+    @patch("pinboard_mcp_server.client.pinboard.Pinboard")
+    async def test_search_bookmarks_extended_with_tag_match(
+        self, mock_pinboard_class, valid_token
+    ):
+        """Test extended search with exact tag match."""
+        client = PinboardClient(valid_token)
+
+        # Mock tag search
+        mock_posts = [
+            Mock(
+                url="https://example.com/tag",
+                description="Tag Result",
+                extended="",
+                tags=["python"],
+                time=Mock(isoformat=Mock(return_value="2024-01-01T00:00:00")),
+            )
+        ]
+        client._pb.posts.all.return_value = mock_posts
+
+        with patch.object(
+            client, "get_all_tags", return_value=[TagCount(tag="python", count=5)]
+        ):
+            results = await client.search_bookmarks_extended(
+                "python", days_back=30, limit=10
+            )
+
+            assert len(results) == 1
+            assert results[0].title == "Tag Result"
+
+    @pytest.mark.asyncio
+    @patch("pinboard_mcp_server.client.pinboard.Pinboard")
+    async def test_search_bookmarks_extended_time_based(
+        self, mock_pinboard_class, valid_token
+    ):
+        """Test extended search with time-based search when no tag match."""
+        client = PinboardClient(valid_token)
+
+        # Mock time-based search
+        mock_posts = [
+            Mock(
+                url="https://example.com/time",
+                description="Time Result",
+                extended="Contains query",
+                tags=[],
+                time=Mock(isoformat=Mock(return_value="2024-01-01T00:00:00")),
+            )
+        ]
+        client._pb.posts.all.return_value = mock_posts
+
+        with patch.object(client, "get_all_tags", return_value=[]):
+            results = await client.search_bookmarks_extended(
+                "query", days_back=30, limit=10
+            )
+
+            assert len(results) == 1
+            assert results[0].title == "Time Result"
+
+    @pytest.mark.asyncio
+    @patch("pinboard_mcp_server.client.pinboard.Pinboard")
+    async def test_get_bookmarks_by_tags_with_tag_search_fallback(
+        self, mock_pinboard_class, valid_token
+    ):
+        """Test get_bookmarks_by_tags falls back to direct tag search."""
+        client = PinboardClient(valid_token)
+
+        # Mock posts.all() for tag search
+        mock_posts = [
+            Mock(
+                url="https://example.com/tag",
+                description="Tag Bookmark",
+                extended="",
+                tags=["python"],
+                time=Mock(isoformat=Mock(return_value="2024-01-01T00:00:00")),
+            )
+        ]
+        client._pb.posts.all.return_value = mock_posts
+
+        with patch.object(client, "get_all_bookmarks", return_value=[]):
+            results = await client.get_bookmarks_by_tags(["python"], limit=10)
+
+            assert len(results) == 1
+            assert results[0].title == "Tag Bookmark"
+
+    @pytest.mark.asyncio
+    @patch("pinboard_mcp_server.client.pinboard.Pinboard")
+    async def test_get_bookmarks_by_tags_search_exception(
+        self, mock_pinboard_class, valid_token
+    ):
+        """Test get_bookmarks_by_tags handles tag search exceptions."""
+        client = PinboardClient(valid_token)
+
+        with patch.object(client, "get_all_bookmarks", return_value=[]):
+            with patch.object(
+                client, "_search_by_tag_direct", side_effect=Exception("API Error")
+            ):
+                results = await client.get_bookmarks_by_tags(["python"], limit=10)
+                assert len(results) == 0
+
+    @pytest.mark.asyncio
+    @patch("pinboard_mcp_server.client.pinboard.Pinboard")
+    async def test_cache_validity_check_exception(
+        self, mock_pinboard_class, valid_token
+    ):
+        """Test cache validity check handles exceptions gracefully."""
+        client = PinboardClient(valid_token)
+
+        # Mock posts.update() to raise exception
+        client._pb.posts.update.side_effect = Exception("Network error")
+
+        # Should return False when exception occurs
+        is_valid = await client._check_cache_validity()
+        assert is_valid is False
+
+    @pytest.mark.asyncio
+    @patch("pinboard_mcp_server.client.pinboard.Pinboard")
+    async def test_refresh_bookmark_cache_with_expansion(
+        self, mock_pinboard_class, valid_token
+    ):
+        """Test bookmark cache refresh with expand_search=True."""
+        client = PinboardClient(valid_token)
+
+        # Mock posts.all() for expanded search
+        mock_posts = [
+            Mock(
+                url="https://example.com/expanded",
+                description="Expanded Bookmark",
+                extended="",
+                tags=["test"],
+                time=Mock(isoformat=Mock(return_value="2024-01-01T00:00:00")),
+            )
+        ]
+        client._pb.posts.all.return_value = mock_posts
+
+        await client._refresh_bookmark_cache(expand_search=True)
+
+        assert client._has_expanded_data is True
+        assert len(client._bookmark_cache) == 1
+        assert client._bookmark_cache[0].title == "Expanded Bookmark"
