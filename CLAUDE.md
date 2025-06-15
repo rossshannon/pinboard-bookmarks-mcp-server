@@ -39,6 +39,7 @@ Based on the PRD (docs/pinboard_mcp_server_prd.md), the system follows this desi
 - Load testing with k6 targeting 30 RPS
 - Never log Pinboard API tokens for security
 - All dates returned in ISO-8601 Zulu format
+- When introducing or upgrading dependencies, update the `pyproject.toml` file with the new version and run `poetry update` to update the lock file. Do a search online for appropriate version numbers rather than relying on your memory.
 
 ## Virtual Environment
 
@@ -66,7 +67,7 @@ Common commands:
 The client implements a comprehensive search strategy designed to provide rich data for LLM analysis:
 
 1. **Tag-Based Search**: Uses `posts.all(tag=...)` to get ALL bookmarks with specific tags (most efficient)
-2. **Recent Search**: Uses `posts.recent(count=100)` for fast searches of latest content  
+2. **Recent Search**: Uses `posts.recent(count=100)` for fast searches of latest content
 3. **Extended Search**: Uses `posts.all(fromdt=...)` with 6-month auto-expansion, up to 2-year manual lookback
 4. **Intelligent Optimization**: Automatically detects exact tag matches for efficient retrieval
 
@@ -74,7 +75,7 @@ The client implements a comprehensive search strategy designed to provide rich d
 
 **Available Tools**:
 - `search_bookmarks()` - Smart search with 6-month auto-expansion (up to 100 results)
-- `search_bookmarks_extended()` - Configurable 1-year default search (up to 200 results)  
+- `search_bookmarks_extended()` - Configurable 1-year default search (up to 200 results)
 - `list_bookmarks_by_tags()` - ALL bookmarks with specific tags (up to 200 results) - **Most efficient for historical data**
 - `list_tags()` - All available tags for discovery
 

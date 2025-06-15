@@ -104,7 +104,7 @@ class PinboardClient:
 
     async def _refresh_bookmark_cache(self, expand_search: bool = False) -> None:
         """Refresh the bookmark cache from Pinboard API.
-        
+
         Args:
             expand_search: If True, get more bookmarks using posts.all() with date filter.
                           If False, get only recent 100 bookmarks.
@@ -116,7 +116,9 @@ class PinboardClient:
                 # Get bookmarks from the last 6 months - balance between comprehensive and reasonable
                 # The LLM can intelligently select what's most relevant
                 from_date = datetime.now() - timedelta(days=180)  # 6 months
-                return self._pb.posts.all(fromdt=from_date.strftime('%Y-%m-%dT%H:%M:%SZ'))
+                return self._pb.posts.all(
+                    fromdt=from_date.strftime("%Y-%m-%dT%H:%M:%SZ")
+                )
             else:
                 # Use posts.recent for initial cache - gets most recent 100 posts
                 return self._pb.posts.recent(count=100)
@@ -130,7 +132,9 @@ class PinboardClient:
         else:
             # posts.recent() returns a dict with 'posts' key
             posts_list = (
-                result["posts"] if isinstance(result, dict) and "posts" in result else []
+                result["posts"]
+                if isinstance(result, dict) and "posts" in result
+                else []
             )
 
         self._bookmark_cache = [
@@ -138,38 +142,39 @@ class PinboardClient:
             for post in posts_list
         ]
         self._cache_valid_until = datetime.now() + timedelta(hours=1)
-        
+
         # Mark whether we have expanded data
         self._has_expanded_data = expand_search
 
     async def _search_by_tag_direct(
-        self, 
-        tag: str, 
-        matches: list[Bookmark], 
-        from_date: Optional[datetime], 
-        to_date: Optional[datetime], 
-        limit: int
+        self,
+        tag: str,
+        matches: list[Bookmark],
+        from_date: Optional[datetime],
+        to_date: Optional[datetime],
+        limit: int,
     ) -> None:
         """Search for bookmarks by tag using Pinboard API directly.
-        
+
         This is much more efficient than downloading all bookmarks.
         Modifies the matches list in-place.
         """
+
         def _get_posts_by_tag() -> Any:
             self._rate_limit_sync()
             # Use posts.all with tag filter - much more efficient
             params = {"tag": tag}
             if from_date:
-                params["fromdt"] = from_date.strftime('%Y-%m-%dT%H:%M:%SZ')
+                params["fromdt"] = from_date.strftime("%Y-%m-%dT%H:%M:%SZ")
             if to_date:
-                params["todt"] = to_date.strftime('%Y-%m-%dT%H:%M:%SZ')
+                params["todt"] = to_date.strftime("%Y-%m-%dT%H:%M:%SZ")
             return self._pb.posts.all(**params)
 
         result: Any = await self._run_in_executor(_get_posts_by_tag)
-        
+
         # posts.all() returns a list directly
         posts_list = result if isinstance(result, list) else []
-        
+
         # Convert and add to matches (up to limit)
         for post in posts_list:
             if len(matches) >= limit:
@@ -191,7 +196,7 @@ class PinboardClient:
 
     async def get_all_bookmarks(self, expand_if_needed: bool = False) -> list[Bookmark]:
         """Get bookmarks, using cache when possible.
-        
+
         Args:
             expand_if_needed: If True, will expand search to get more bookmarks
                             when initial cache is empty or insufficient.
@@ -239,15 +244,19 @@ class PinboardClient:
         if not matches:
             # First, check if the query matches a tag exactly - use direct tag search
             tags = await self.get_all_tags()
-            exact_tag_match = next((tag.tag for tag in tags if tag.tag.lower() == query_lower), None)
-            
+            exact_tag_match = next(
+                (tag.tag for tag in tags if tag.tag.lower() == query_lower), None
+            )
+
             if exact_tag_match:
                 # Use efficient tag-based search
                 try:
-                    await self._search_by_tag_direct(exact_tag_match, matches, None, None, limit)
+                    await self._search_by_tag_direct(
+                        exact_tag_match, matches, None, None, limit
+                    )
                 except Exception:
                     pass  # Fall through to expanded search if tag search fails
-            
+
             # If still no matches and we haven't expanded yet, try with more data
             # This allows comprehensive free-text search but limits scope for safety
             if not matches and not self._has_expanded_data:
@@ -270,12 +279,12 @@ class PinboardClient:
         self, query: str, days_back: int = 365, limit: int = 100
     ) -> list[Bookmark]:
         """Extended search that looks further back in time for comprehensive results.
-        
+
         Args:
             query: Search query to match against bookmark titles, notes, and tags
             days_back: How many days back to search (default 1 year)
             limit: Maximum number of results to return (default 100)
-            
+
         Note: This provides generous data for LLM filtering and analysis.
         Returns comprehensive results that the client can intelligently filter.
         """
@@ -284,34 +293,41 @@ class PinboardClient:
             return self._query_cache[cache_key]
 
         query_lower = query.lower()
-        
+
         # First check if this is an exact tag match - use efficient tag search
         tags = await self.get_all_tags()
-        exact_tag_match = next((tag.tag for tag in tags if tag.tag.lower() == query_lower), None)
-        
-        matches = []
+        exact_tag_match = next(
+            (tag.tag for tag in tags if tag.tag.lower() == query_lower), None
+        )
+
+        matches: list[Bookmark] = []
         if exact_tag_match:
             # Use efficient tag-based search for exact matches
             try:
-                await self._search_by_tag_direct(exact_tag_match, matches, None, None, limit)
+                await self._search_by_tag_direct(
+                    exact_tag_match, matches, None, None, limit
+                )
             except Exception:
                 pass
-        
+
         # If no tag match or tag search failed, do extended time-based search
         if not matches:
+
             def _get_extended_posts() -> Any:
                 self._rate_limit_sync()
                 from_date = datetime.now() - timedelta(days=days_back)
-                return self._pb.posts.all(fromdt=from_date.strftime('%Y-%m-%dT%H:%M:%SZ'))
+                return self._pb.posts.all(
+                    fromdt=from_date.strftime("%Y-%m-%dT%H:%M:%SZ")
+                )
 
             result: Any = await self._run_in_executor(_get_extended_posts)
             posts_list = result if isinstance(result, list) else []
-            
+
             # Search through the extended results
             for post in posts_list:
                 if len(matches) >= limit:
                     break
-                    
+
                 bookmark = Bookmark.from_pinboard(self._convert_pinboard_bookmark(post))
                 if (
                     query_lower in bookmark.title.lower()
@@ -322,7 +338,7 @@ class PinboardClient:
 
         # Sort by most recent first
         matches.sort(key=lambda b: b.saved_at, reverse=True)
-        
+
         # Cache the result
         self._query_cache[cache_key] = matches
         return matches
@@ -388,7 +404,9 @@ class PinboardClient:
         if not matches and len(tags) == 1:
             # For single tag searches, use posts.all with tag filter - gets ALL bookmarks with that tag
             try:
-                await self._search_by_tag_direct(tags[0], matches, from_date, to_date, limit)
+                await self._search_by_tag_direct(
+                    tags[0], matches, from_date, to_date, limit
+                )
             except Exception:
                 # If tag search fails, there's likely no bookmarks with that tag
                 pass  # matches will remain empty

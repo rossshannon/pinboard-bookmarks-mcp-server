@@ -87,7 +87,9 @@ class TestSearchResult:
 
     def test_search_result_creation(self, sample_bookmarks):
         """Test creating a SearchResult."""
-        result = SearchResult(bookmarks=sample_bookmarks[:2], total=2, query="python")
+        result = SearchResult(
+            bookmarks=sample_bookmarks[:2], total=2, query="python", tags=None
+        )
 
         assert len(result.bookmarks) == 2
         assert result.total == 2
@@ -97,7 +99,7 @@ class TestSearchResult:
     def test_search_result_with_tags(self, sample_bookmarks):
         """Test creating a SearchResult with tags."""
         result = SearchResult(
-            bookmarks=sample_bookmarks, total=3, tags=["python", "web"]
+            bookmarks=sample_bookmarks, total=3, query=None, tags=["python", "web"]
         )
 
         assert len(result.bookmarks) == 3

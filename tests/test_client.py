@@ -136,9 +136,7 @@ class TestPinboardClient:
         """Test client cleanup."""
         client = PinboardClient(valid_token)
 
-        # Mock the executor
-        client._executor.shutdown = Mock()
-
-        await client.close()
-
-        client._executor.shutdown.assert_called_once_with(wait=True)
+        # Mock the executor shutdown method
+        with patch.object(client._executor, "shutdown") as mock_shutdown:
+            await client.close()
+            mock_shutdown.assert_called_once_with(wait=True)

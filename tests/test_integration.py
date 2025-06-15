@@ -211,7 +211,8 @@ class TestPinboardClientIntegration(unittest.TestCase):
             # Check that python tag has count 3
             python_tag = next((tag for tag in results if tag.tag == "python"), None)
             self.assertIsNotNone(python_tag)
-            self.assertEqual(python_tag.count, 3)
+            if python_tag is not None:
+                self.assertEqual(python_tag.count, 3)
 
             await client.close()
 

@@ -23,7 +23,7 @@ async def search_bookmarks(query: str, limit: int = 20) -> dict[str, Any]:
     Args:
         query: Search query to match against bookmark titles, notes, and tags
         limit: Maximum number of results to return (1-100, default 20)
-    
+
     Note: Searches recent bookmarks first, expands automatically if needed.
     For comprehensive historical search, use search_bookmarks_extended.
     """
@@ -49,7 +49,7 @@ async def search_bookmarks_extended(
         query: Search query to match against bookmark titles, notes, and tags
         days_back: How many days back to search (1-730, default 365 = 1 year)
         limit: Maximum number of results to return (1-200, default 100)
-    
+
     Note: Provides comprehensive results while being mindful of server load.
     Use tag-based searches for most efficient access to historical bookmarks.
     """
@@ -106,7 +106,7 @@ async def list_bookmarks_by_tags(
         from_date: Start date in ISO format (YYYY-MM-DD), optional
         to_date: End date in ISO format (YYYY-MM-DD), optional
         limit: Maximum number of results to return (1-200, default 100)
-    
+
     Note: Gets ALL bookmarks with specified tags, regardless of age.
     Very efficient for tag-based searches. Provides generous data for analysis.
     """

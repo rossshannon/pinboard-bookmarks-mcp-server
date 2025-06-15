@@ -28,7 +28,11 @@
       "Bash(python -m pytest -v --tb=no -q)",
       "Bash(PINBOARD_TOKEN=\"rufous:42081681E2CA093FAF0B\" PYTHONPATH=\"./src\" /Users/ross/.venvs/pinboard-bookmarks-mcp-server/bin/python debug_api.py)",
       "Bash(PINBOARD_TOKEN=\"rufous:42081681E2CA093FAF0B\" /Users/ross/.venvs/pinboard-bookmarks-mcp-server/bin/python debug_posts_format.py)",
-      "Bash(python -m pytest tests/ -q)"
+      "Bash(python -m pytest tests/ -q)",
+      "Bash(pip install:*)",
+      "Bash(touch:*)",
+      "Bash(pre-commit:*)",
+      "Bash(git checkout:*)"
     ],
     "deny": []
   }

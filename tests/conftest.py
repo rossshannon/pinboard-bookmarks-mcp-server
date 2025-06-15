@@ -9,7 +9,7 @@ from pinboard_mcp_server.models import Bookmark, TagCount
 
 
 @pytest.fixture
-def mock_pinboard_data() -> dict:
+def mock_pinboard_data() -> list[dict[str, str]]:
     """Sample Pinboard API response data."""
     return [
         {

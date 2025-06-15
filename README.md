@@ -93,7 +93,7 @@ List bookmarks filtered by tags with optional date range.
 **Parameters:**
 - `tags` (array): List of tags to filter by (1-3 tags)
 - `from_date` (string, optional): Start date in ISO format (YYYY-MM-DD)
-- `to_date` (string, optional): End date in ISO format (YYYY-MM-DD)  
+- `to_date` (string, optional): End date in ISO format (YYYY-MM-DD)
 - `limit` (int, optional): Maximum results (default: 20, max: 100)
 
 **Example:**
