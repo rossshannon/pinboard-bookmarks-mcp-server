@@ -16,7 +16,7 @@ This server provides LLMs with the ability to search, filter, and retrieve bookm
 - **Smart caching** with LRU cache and automatic invalidation using `posts/update` endpoint
 - **Rate limiting** respects Pinboard's 3-second guideline between API calls
 - **Field mapping** converts Pinboard's legacy field names to intuitive ones (description→title, extended→notes)
-- **Comprehensive testing** with 76% code coverage and integration test harnesses
+- **Comprehensive testing** with 87% code coverage and integration test harnesses
 
 ## Installation
 
@@ -144,14 +144,14 @@ pytest --cov=src --cov-report=term-missing
 # Set your Pinboard token
 export PINBOARD_TOKEN="username:token"
 
-# Run real API tests
-python test_mcp_harness.py
+# Run debug utility to test search functionality
+PINBOARD_TOKEN="username:token" python tests/debug_bookmarks.py
 ```
 
 ### Mock API testing
 ```bash
-# Run mock tests (no API token required)
-python test_mcp_harness_mock.py
+# Run comprehensive test suite
+python -m pytest tests/ -v
 ```
 
 ## Development
@@ -193,13 +193,12 @@ pytest -v
 
 ### Key Files
 
-- `src/pinboard_mcp_server/main.py` - MCP server entry point
+- `src/pinboard_mcp_server/main.py` - MCP server entry point and tool implementations
 - `src/pinboard_mcp_server/client.py` - Pinboard API client with caching
-- `src/pinboard_mcp_server/tools.py` - MCP tool implementations
 - `src/pinboard_mcp_server/models.py` - Pydantic data models
 - `tests/` - Comprehensive test suite
-- `test_mcp_harness.py` - Real API integration testing
-- `test_mcp_harness_mock.py` - Mock API testing
+- `tests/debug_bookmarks.py` - Debug utility for testing search functionality
+- `docs/TEST_HARNESS.md` - Documentation for test harnesses
 
 ## Performance
 

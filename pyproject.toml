@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pinboard-mcp-server"
-version = "0.1.0"
+version = "0.2.0"
 description = "Pinboard MCP Server - Read-only access to Pinboard bookmarks for LLMs"
 authors = [
     {name = "Pinboard MCP Server Team"}
