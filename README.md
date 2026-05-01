@@ -12,7 +12,7 @@ This server provides LLMs with the ability to search, filter, and retrieve bookm
 ## Features
 
 - **Read-only access** to Pinboard bookmarks
-- **Four MCP tools**: `searchBookmarks`, `listRecentBookmarks`, `listBookmarksByTags`, `listTags`
+- **Five MCP tools**: `search_bookmarks`, `search_bookmarks_extended`, `list_recent_bookmarks`, `list_bookmarks_by_tags`, `list_tags`
 - **Smart caching** with LRU cache and automatic invalidation using `posts/update` endpoint
 - **Rate limiting** respects Pinboard's 3-second guideline between API calls
 - **Field mapping** converts Pinboard's legacy field names to intuitive ones (description→title, extended→notes)
@@ -43,6 +43,13 @@ pip install -e .
    ```bash
    pinboard-mcp-server
    ```
+4. **Verify it's working**:
+   ```bash
+   # Test help command (works without token)
+   pinboard-mcp-server --help
+
+   # Server should show "Starting MCP server" when run with token
+   ```
 
 ## Usage with Claude Desktop
 
@@ -63,8 +70,8 @@ Add this configuration to your Claude Desktop settings:
 
 ## Available Tools
 
-### 1. `searchBookmarks`
-Search bookmarks by query string across titles, notes, and tags.
+### 1. `search_bookmarks`
+Search bookmarks by query string across titles, notes, and tags. Recent-focused with automatic expansion.
 
 **Parameters:**
 - `query` (string): Search query
@@ -75,7 +82,20 @@ Search bookmarks by query string across titles, notes, and tags.
 Search for "python testing" bookmarks
 ```
 
-### 2. `listRecentBookmarks`
+### 2. `search_bookmarks_extended`
+Extended search for comprehensive historical results across titles, notes, and tags.
+
+**Parameters:**
+- `query` (string): Search query
+- `days_back` (int, optional): How many days back to search (default: 365, max: 730)
+- `limit` (int, optional): Maximum results (default: 100, max: 200)
+
+**Example:**
+```
+Search the last 2 years for "kubernetes" bookmarks
+```
+
+### 3. `list_recent_bookmarks`
 List bookmarks saved in the last N days.
 
 **Parameters:**
@@ -87,21 +107,21 @@ List bookmarks saved in the last N days.
 Show me bookmarks from the last 3 days
 ```
 
-### 3. `listBookmarksByTags`
-List bookmarks filtered by tags with optional date range.
+### 4. `list_bookmarks_by_tags`
+List ALL bookmarks filtered by tags with optional date range. Most efficient for historical access.
 
 **Parameters:**
 - `tags` (array): List of tags to filter by (1-3 tags)
 - `from_date` (string, optional): Start date in ISO format (YYYY-MM-DD)
 - `to_date` (string, optional): End date in ISO format (YYYY-MM-DD)
-- `limit` (int, optional): Maximum results (default: 20, max: 100)
+- `limit` (int, optional): Maximum results (default: 100, max: 200)
 
 **Example:**
 ```
 Find bookmarks tagged with "python" and "api" from January 2024
 ```
 
-### 4. `listTags`
+### 5. `list_tags`
 List all tags with their usage counts.
 
 **Example:**
@@ -144,13 +164,13 @@ pytest --cov=src --cov-report=term-missing
 # Set your Pinboard token
 export PINBOARD_TOKEN="username:token"
 
-# Run debug utility to test search functionality
+# Run debug utility to test search functionality (development only)
 PINBOARD_TOKEN="username:token" python tests/debug_bookmarks.py
 ```
 
 ### Mock API testing
 ```bash
-# Run comprehensive test suite
+# Run comprehensive test suite (development only)
 python -m pytest tests/ -v
 ```
 
@@ -158,20 +178,19 @@ python -m pytest tests/ -v
 
 ### Setup
 ```bash
-# Clone and install
+# Clone and setup
 git clone https://github.com/rossshannon/pinboard-bookmarks-mcp-server.git
 cd pinboard-bookmarks-mcp-server
 
-# Create virtual environment
-python -m venv ~/.venvs/pinboard-bookmarks-mcp-server
-source ~/.venvs/pinboard-bookmarks-mcp-server/bin/activate
-
-# Install in development mode
-pip install -e ".[dev]"
+# Quick development setup
+./scripts/dev-setup.sh
 ```
 
 ### Code Quality
 ```bash
+# Activate environment
+source ~/.venvs/pinboard-bookmarks-mcp-server/bin/activate
+
 # Linting and formatting
 ruff check src/ tests/
 ruff format src/ tests/
@@ -181,6 +200,9 @@ mypy src/
 
 # Run tests
 pytest -v
+
+# Build package
+./scripts/build.sh
 ```
 
 ### Architecture
@@ -213,6 +235,30 @@ pytest -v
 - Read-only access to Pinboard data
 - Input validation on all tool parameters
 - Secure environment variable handling
+
+## Troubleshooting
+
+### Common Issues
+
+**"PINBOARD_TOKEN environment variable is required"**
+- Make sure you've set your token: `export PINBOARD_TOKEN="username:token"`
+- Get your token from https://pinboard.in/settings/password
+- Token format should be: `username:1234567890ABCDEF`
+
+**"Command not found: pinboard-mcp-server"**
+- Ensure you've installed the package: `pip install pinboard-mcp-server`
+- Check your Python environment is activated
+- Try reinstalling: `pip uninstall pinboard-mcp-server && pip install pinboard-mcp-server`
+
+**Server starts but Claude Desktop can't connect**
+- Verify the MCP configuration in Claude Desktop settings
+- Check that the `command` path is correct: `pinboard-mcp-server`
+- Ensure the `PINBOARD_TOKEN` is set in the `env` section
+
+**"Permission denied" or "Access denied" errors**
+- Verify your Pinboard token is valid and active
+- Check you have internet connectivity to reach pinboard.in
+- Test your token manually at https://pinboard.in/api/v1/posts/recent
 
 ## Contributing
 

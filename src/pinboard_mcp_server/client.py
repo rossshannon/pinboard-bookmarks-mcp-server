@@ -4,7 +4,7 @@ import asyncio
 import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
-from typing import Any, Optional
+from typing import Any
 
 import pinboard  # type: ignore
 from cachetools import LRUCache
@@ -26,10 +26,10 @@ class PinboardClient:
         self._pb = pinboard.Pinboard(token)
 
         # Cache for bookmarks and tags
-        self._bookmark_cache: Optional[list[Bookmark]] = None
-        self._tag_cache: Optional[list[TagCount]] = None
-        self._last_update_time: Optional[datetime] = None
-        self._cache_valid_until: Optional[datetime] = None
+        self._bookmark_cache: list[Bookmark] | None = None
+        self._tag_cache: list[TagCount] | None = None
+        self._last_update_time: datetime | None = None
+        self._cache_valid_until: datetime | None = None
         self._has_expanded_data: bool = False
 
         # LRU cache for query results
@@ -150,8 +150,8 @@ class PinboardClient:
         self,
         tag: str,
         matches: list[Bookmark],
-        from_date: Optional[datetime],
-        to_date: Optional[datetime],
+        from_date: datetime | None,
+        to_date: datetime | None,
         limit: int,
     ) -> None:
         """Search for bookmarks by tag using Pinboard API directly.
@@ -369,8 +369,8 @@ class PinboardClient:
     async def get_bookmarks_by_tags(
         self,
         tags: list[str],
-        from_date: Optional[datetime] = None,
-        to_date: Optional[datetime] = None,
+        from_date: datetime | None = None,
+        to_date: datetime | None = None,
         limit: int = 20,
     ) -> list[Bookmark]:
         """Get bookmarks filtered by tags and optional date range."""

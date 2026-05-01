@@ -165,3 +165,4 @@ tests/cassettes/
 # Local configuration
 config.local.toml
 .env.local
+*.local.md

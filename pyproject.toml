@@ -7,13 +7,13 @@ name = "pinboard-mcp-server"
 version = "1.0.0"
 description = "Pinboard MCP Server - Read-only access to Pinboard bookmarks for LLMs"
 authors = [
-    {name = "Pinboard MCP Server Team"}
+    {name = "Ross Shannon", email = "ross@andopen.co"}
 ]
 readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.10"
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
@@ -42,18 +42,27 @@ dev = [
     "types-cachetools",
     "responses>=0.23.0",
     "vcrpy>=5.1.0",
+    "pre-commit>=3.0.0",
+    "build>=1.0.0",
+    "twine>=4.0.0",
 ]
 mcp = [
     "mcp>=1.0.0",
 ]
 
 [project.urls]
-Homepage = "https://github.com/anthropics/pinboard-mcp-server"
-Repository = "https://github.com/anthropics/pinboard-mcp-server"
-Issues = "https://github.com/anthropics/pinboard-mcp-server/issues"
+Homepage = "https://github.com/rossshannon/pinboard-bookmarks-mcp-server"
+Repository = "https://github.com/rossshannon/pinboard-bookmarks-mcp-server"
+Issues = "https://github.com/rossshannon/pinboard-bookmarks-mcp-server/issues"
 
 [project.scripts]
 pinboard-mcp-server = "pinboard_mcp_server.main:main"
+
+[tool.uv]
+# 7-day dependency cooldown: refuse package versions published in the last
+# week so freshly-uploaded malicious releases (typically caught within that
+# window) are excluded from the resolver.
+exclude-newer = "1 week"
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -62,7 +71,7 @@ where = ["src"]
 "" = "src"
 
 [tool.ruff]
-target-version = "py39"
+target-version = "py310"
 line-length = 88
 
 [tool.ruff.lint]

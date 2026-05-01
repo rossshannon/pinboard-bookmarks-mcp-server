@@ -1,7 +1,7 @@
 """Data models for the Pinboard MCP Server."""
 
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any
 from uuid import uuid4
 
 from pydantic import BaseModel, Field
@@ -49,15 +49,13 @@ class SearchResult(BaseModel):
 
     bookmarks: list[Bookmark] = Field(description="List of matching bookmarks")
     total: int = Field(description="Total number of results")
-    query: Optional[str] = Field(None, description="The search query used")
-    tags: Optional[list[str]] = Field(None, description="Tags used for filtering")
+    query: str | None = Field(None, description="The search query used")
+    tags: list[str] | None = Field(None, description="Tags used for filtering")
 
 
 class ErrorResponse(BaseModel):
     """Error response model."""
 
     error: str = Field(description="Error message")
-    code: Optional[str] = Field(None, description="Error code")
-    details: Optional[dict[str, Any]] = Field(
-        None, description="Additional error details"
-    )
+    code: str | None = Field(None, description="Error code")
+    details: dict[str, Any] | None = Field(None, description="Additional error details")

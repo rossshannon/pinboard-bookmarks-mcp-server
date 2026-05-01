@@ -156,11 +156,30 @@ def main() -> None:
     global client
 
     try:
+        # Check for help flag first
+        if "--help" in sys.argv or "-h" in sys.argv:
+            from pinboard_mcp_server import __version__
+
+            print(f"Pinboard MCP Server v{__version__}")
+            print("Read-only access to Pinboard.in bookmarks for LLMs via MCP")
+            print()
+            print("Usage: pinboard-mcp-server")
+            print()
+            print("Environment Variables:")
+            print("  PINBOARD_TOKEN    Your Pinboard API token (username:token)")
+            print()
+            print("Get your token at: https://pinboard.in/settings/password")
+            return
+
         # Get Pinboard API token
         token = os.getenv("PINBOARD_TOKEN")
         if not token:
             print(
                 "Error: PINBOARD_TOKEN environment variable is required",
+                file=sys.stderr,
+            )
+            print(
+                "Get your token at: https://pinboard.in/settings/password",
                 file=sys.stderr,
             )
             sys.exit(1)
