@@ -37,7 +37,7 @@ Pinboard MCP Server v1.0.0 provides production-ready, read-only access to Pinboa
 ### 📦 **Installation**
 
 ```bash
-pip install pinboard-mcp-server
+pip install pinboard-bookmarks-mcp-server
 ```
 
 ### 🚀 **Quick Start**

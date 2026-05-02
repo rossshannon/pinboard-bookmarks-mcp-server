@@ -6,7 +6,7 @@ This directory contains example configurations for integrating the Pinboard MCP 
 
 1. **Install the Pinboard MCP Server** (if not already installed):
    ```bash
-   pip install pinboard-mcp-server
+   pip install pinboard-bookmarks-mcp-server
    ```
 
 2. **Get your Pinboard API token**:
@@ -96,7 +96,7 @@ Once configured, you can test the integration by asking Claude:
 ### Common Issues
 
 1. **"Command not found" error**:
-   - Ensure `pinboard-mcp-server` is installed: `pip install pinboard-mcp-server`
+   - Ensure `pinboard-mcp-server` is installed: `pip install pinboard-bookmarks-mcp-server`
    - Check that the installation directory is in your PATH
 
 2. **Authentication errors**:

@@ -22,7 +22,7 @@ This server provides LLMs with the ability to search, filter, and retrieve bookm
 
 ### Via pip (recommended)
 ```bash
-pip install pinboard-mcp-server
+pip install pinboard-bookmarks-mcp-server
 ```
 
 ### From source
@@ -246,9 +246,9 @@ pytest -v
 - Token format should be: `username:1234567890ABCDEF`
 
 **"Command not found: pinboard-mcp-server"**
-- Ensure you've installed the package: `pip install pinboard-mcp-server`
+- Ensure you've installed the package: `pip install pinboard-bookmarks-mcp-server`
 - Check your Python environment is activated
-- Try reinstalling: `pip uninstall pinboard-mcp-server && pip install pinboard-mcp-server`
+- Try reinstalling: `pip uninstall pinboard-bookmarks-mcp-server && pip install pinboard-bookmarks-mcp-server`
 
 **Server starts but Claude Desktop can't connect**
 - Verify the MCP configuration in Claude Desktop settings

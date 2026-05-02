@@ -6,7 +6,7 @@ This repository includes GitHub Actions workflows for automated package building
 
 ### Package vs Repository Names
 - **GitHub Repository**: `rossshannon/pinboard-bookmarks-mcp-server`
-- **PyPI Package**: `pinboard-mcp-server` (https://pypi.org/project/pinboard-mcp-server/)
+- **PyPI Package**: `pinboard-bookmarks-mcp-server` (https://pypi.org/project/pinboard-bookmarks-mcp-server/)
 - **Python Import**: `import pinboard_mcp_server`
 
 ### Current Workflows
@@ -20,7 +20,7 @@ This repository includes GitHub Actions workflows for automated package building
 
 1. **Configure PyPI Trusted Publisher**:
    - Go to https://pypi.org/manage/account/publishing/
-   - Add a new trusted publisher for the **pinboard-mcp-server** package:
+   - Add a new trusted publisher for the **pinboard-bookmarks-mcp-server** package:
      - **Owner**: `rossshannon`
      - **Repository**: `pinboard-bookmarks-mcp-server` (GitHub repository name)
      - **Workflow**: `publish-trusted.yml`

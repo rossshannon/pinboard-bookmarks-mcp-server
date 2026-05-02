@@ -11,7 +11,7 @@ jobs:
 
     environment:
       name: pypi
-      url: https://pypi.org/p/pinboard-mcp-server
+      url: https://pypi.org/p/pinboard-bookmarks-mcp-server
 
     permissions:
       id-token: write  # IMPORTANT: this permission is mandatory for trusted publishing
