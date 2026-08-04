@@ -76,6 +76,7 @@ Search bookmarks by query string across titles, notes, and tags. Recent-focused 
 **Parameters:**
 - `query` (string): Search query
 - `limit` (int, optional): Maximum results (default: 20, max: 100)
+- `offset` (int, optional): Number of matching results to skip, for pagination (default: 0)
 
 **Example:**
 ```
@@ -89,6 +90,7 @@ Extended search for comprehensive historical results across titles, notes, and t
 - `query` (string): Search query
 - `days_back` (int, optional): How many days back to search (default: 365, max: 730)
 - `limit` (int, optional): Maximum results (default: 100, max: 200)
+- `offset` (int, optional): Number of matching results to skip, for pagination (default: 0)
 
 **Example:**
 ```
@@ -101,6 +103,7 @@ List bookmarks saved in the last N days.
 **Parameters:**
 - `days` (int, optional): Days to look back (default: 7, max: 30)
 - `limit` (int, optional): Maximum results (default: 20, max: 100)
+- `offset` (int, optional): Number of matching results to skip, for pagination (default: 0)
 
 **Example:**
 ```
@@ -115,6 +118,7 @@ List ALL bookmarks filtered by tags with optional date range. Most efficient for
 - `from_date` (string, optional): Start date in ISO format (YYYY-MM-DD)
 - `to_date` (string, optional): End date in ISO format (YYYY-MM-DD)
 - `limit` (int, optional): Maximum results (default: 100, max: 200)
+- `offset` (int, optional): Number of matching results to skip, for pagination (default: 0)
 
 **Example:**
 ```

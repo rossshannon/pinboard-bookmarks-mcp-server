@@ -177,6 +177,41 @@ class TestPinboardClient:
 
     @pytest.mark.asyncio
     @patch("pinboard_mcp_server.client.pinboard.Pinboard")
+    async def test_search_bookmarks_offset_uses_tag_direct_fallback(
+        self, mock_pinboard_class, valid_token
+    ):
+        """Test that an offset beyond the recent-cache window falls back to
+        the direct tag search, fetching enough (offset + limit) to slice
+        the correct page out of."""
+        client = PinboardClient(valid_token)
+
+        # Pinboard's API returns bookmarks newest-first; mirror that here.
+        mock_posts = [
+            Mock(
+                url=f"https://example.com/{i}",
+                description=f"Python Guide {i}",
+                extended="",
+                tags=["python"],
+                time=Mock(isoformat=Mock(return_value=f"2024-01-{i:02d}T00:00:00")),
+            )
+            for i in (3, 2, 1)
+        ]
+        client._pb.posts.all.return_value = mock_posts
+
+        with patch.object(client, "get_all_bookmarks", return_value=[]):
+            with patch.object(
+                client, "get_all_tags", return_value=[TagCount(tag="python", count=5)]
+            ):
+                results = await client.search_bookmarks("python", limit=1, offset=2)
+
+                assert len(results) == 1
+                assert results[0].title == "Python Guide 1"
+                client._pb.posts.all.assert_called_once_with(
+                    tag="python", start=0, results=3
+                )
+
+    @pytest.mark.asyncio
+    @patch("pinboard_mcp_server.client.pinboard.Pinboard")
     async def test_search_bookmarks_with_expansion(
         self, mock_pinboard_class, valid_token
     ):
@@ -283,6 +318,102 @@ class TestPinboardClient:
 
     @pytest.mark.asyncio
     @patch("pinboard_mcp_server.client.pinboard.Pinboard")
+    async def test_search_bookmarks_extended_tag_match_forwards_offset(
+        self, mock_pinboard_class, valid_token
+    ):
+        """Test extended search forwards offset to the direct tag search."""
+        client = PinboardClient(valid_token)
+        client._pb.posts.all.return_value = []
+
+        with patch.object(
+            client, "get_all_tags", return_value=[TagCount(tag="python", count=50)]
+        ):
+            await client.search_bookmarks_extended(
+                "python", days_back=30, limit=10, offset=20
+            )
+
+            client._pb.posts.all.assert_called_once_with(
+                tag="python", start=20, results=10
+            )
+
+    @pytest.mark.asyncio
+    @patch("pinboard_mcp_server.client.pinboard.Pinboard")
+    async def test_search_bookmarks_extended_tag_offset_past_end_does_not_fall_through(
+        self, mock_pinboard_class, valid_token
+    ):
+        """Test that an offset past the end of a tag's results returns empty
+        instead of silently falling through to the unrelated time-based
+        search (which uses a different, non-tag enumeration)."""
+        client = PinboardClient(valid_token)
+        # The tag search succeeds but yields nothing at this offset.
+        client._pb.posts.all.return_value = []
+
+        with patch.object(
+            client, "get_all_tags", return_value=[TagCount(tag="python", count=5)]
+        ):
+            results = await client.search_bookmarks_extended(
+                "python", days_back=30, limit=10, offset=100
+            )
+
+            assert results == []
+            # posts.all should only have been called once, for the tag
+            # search - never for the time-based fallback.
+            client._pb.posts.all.assert_called_once_with(
+                tag="python", start=100, results=10
+            )
+
+    @pytest.mark.asyncio
+    @patch("pinboard_mcp_server.client.pinboard.Pinboard")
+    async def test_search_bookmarks_extended_time_based_offset(
+        self, mock_pinboard_class, valid_token
+    ):
+        """Test that offset pages through the time-based branch correctly."""
+        client = PinboardClient(valid_token)
+
+        mock_posts = [
+            Mock(
+                url=f"https://example.com/time-{i}",
+                description=f"Time Result {i}",
+                extended="Contains query",
+                tags=[],
+                time=Mock(isoformat=Mock(return_value=f"2024-01-{i:02d}T00:00:00")),
+            )
+            for i in range(1, 4)
+        ]
+        client._pb.posts.all.return_value = mock_posts
+
+        with patch.object(client, "get_all_tags", return_value=[]):
+            page1 = await client.search_bookmarks_extended(
+                "query", days_back=30, limit=1, offset=0
+            )
+            page2 = await client.search_bookmarks_extended(
+                "query", days_back=30, limit=1, offset=1
+            )
+
+            assert len(page1) == 1
+            assert len(page2) == 1
+            # Most recent first: time-3 (Jan 3) before time-2 (Jan 2).
+            assert page1[0].title == "Time Result 3"
+            assert page2[0].title == "Time Result 2"
+
+    @pytest.mark.asyncio
+    @patch("pinboard_mcp_server.client.pinboard.Pinboard")
+    async def test_search_by_tag_direct_passes_pagination_params(
+        self, mock_pinboard_class, valid_token
+    ):
+        """Test _search_by_tag_direct forwards offset/limit as start/results."""
+        client = PinboardClient(valid_token)
+        client._pb.posts.all.return_value = []
+
+        matches: list[Bookmark] = []
+        await client._search_by_tag_direct(
+            "python", matches, None, None, limit=25, offset=50
+        )
+
+        client._pb.posts.all.assert_called_once_with(tag="python", start=50, results=25)
+
+    @pytest.mark.asyncio
+    @patch("pinboard_mcp_server.client.pinboard.Pinboard")
     async def test_get_bookmarks_by_tags_with_tag_search_fallback(
         self, mock_pinboard_class, valid_token
     ):
@@ -321,6 +452,35 @@ class TestPinboardClient:
             ):
                 results = await client.get_bookmarks_by_tags(["python"], limit=10)
                 assert len(results) == 0
+
+    @pytest.mark.asyncio
+    @patch("pinboard_mcp_server.client.pinboard.Pinboard")
+    async def test_get_bookmarks_by_tags_offset_uses_direct_search(
+        self, mock_pinboard_class, valid_token
+    ):
+        """Test that an offset beyond the cached window falls back to a
+        direct, API-paginated tag search with the offset forwarded."""
+        client = PinboardClient(valid_token)
+
+        mock_posts = [
+            Mock(
+                url="https://example.com/tag-page-2",
+                description="Tag Bookmark Page 2",
+                extended="",
+                tags=["python"],
+                time=Mock(isoformat=Mock(return_value="2024-01-01T00:00:00")),
+            )
+        ]
+        client._pb.posts.all.return_value = mock_posts
+
+        with patch.object(client, "get_all_bookmarks", return_value=[]):
+            results = await client.get_bookmarks_by_tags(
+                ["python"], limit=10, offset=10
+            )
+
+        assert len(results) == 1
+        assert results[0].title == "Tag Bookmark Page 2"
+        client._pb.posts.all.assert_called_once_with(tag="python", start=10, results=10)
 
     @pytest.mark.asyncio
     @patch("pinboard_mcp_server.client.pinboard.Pinboard")

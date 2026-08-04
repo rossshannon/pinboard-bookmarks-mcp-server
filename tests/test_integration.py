@@ -138,6 +138,40 @@ class TestPinboardClientIntegration(unittest.TestCase):
         asyncio.run(run_test())
 
     @patch("pinboard_mcp_server.client.pinboard.Pinboard")
+    def test_search_bookmarks_offset_pagination(self, mock_pinboard_class):
+        """Test that offset pages through search results without gaps or overlap."""
+
+        async def run_test():
+            mock_bookmarks = self.create_mock_pinboard_bookmarks(self.sample_posts_data)
+            mock_pb = MagicMock()
+            mock_pb.posts.recent.return_value = {"posts": mock_bookmarks}
+            mock_pb.posts.update.return_value = {"update_time": "2024-01-15T12:00:00Z"}
+            mock_pinboard_class.return_value = mock_pb
+
+            client = PinboardClient(self.test_token)
+
+            all_results = await client.search_bookmarks("python", limit=10)
+            self.assertEqual(len(all_results), 3)
+
+            page1 = await client.search_bookmarks("python", limit=1, offset=0)
+            page2 = await client.search_bookmarks("python", limit=1, offset=1)
+            page3 = await client.search_bookmarks("python", limit=1, offset=2)
+            page4 = await client.search_bookmarks("python", limit=1, offset=3)
+
+            self.assertEqual(len(page1), 1)
+            self.assertEqual(len(page2), 1)
+            self.assertEqual(len(page3), 1)
+            self.assertEqual(len(page4), 0)
+            self.assertEqual(
+                [page1[0].url, page2[0].url, page3[0].url],
+                [b.url for b in all_results],
+            )
+
+            await client.close()
+
+        asyncio.run(run_test())
+
+    @patch("pinboard_mcp_server.client.pinboard.Pinboard")
     def test_recent_bookmarks_integration(self, mock_pinboard_class):
         """Test recent bookmarks functionality end-to-end"""
 
@@ -157,6 +191,36 @@ class TestPinboardClientIntegration(unittest.TestCase):
             # Test with shorter timeframe (3 days)
             results = await client.get_recent_bookmarks(days=3, limit=20)
             self.assertLessEqual(len(results), 3)
+
+            await client.close()
+
+        asyncio.run(run_test())
+
+    @patch("pinboard_mcp_server.client.pinboard.Pinboard")
+    def test_recent_bookmarks_offset_pagination(self, mock_pinboard_class):
+        """Test that offset pages through recent bookmarks without gaps or overlap."""
+
+        async def run_test():
+            mock_bookmarks = self.create_mock_pinboard_bookmarks(self.sample_posts_data)
+            mock_pb = MagicMock()
+            mock_pb.posts.recent.return_value = {"posts": mock_bookmarks}
+            mock_pb.posts.update.return_value = {"update_time": "2024-01-15T12:00:00Z"}
+            mock_pinboard_class.return_value = mock_pb
+
+            client = PinboardClient(self.test_token)
+
+            all_results = await client.get_recent_bookmarks(days=30, limit=20)
+            self.assertEqual(len(all_results), 3)
+
+            page1 = await client.get_recent_bookmarks(days=30, limit=2, offset=0)
+            page2 = await client.get_recent_bookmarks(days=30, limit=2, offset=2)
+
+            self.assertEqual(len(page1), 2)
+            self.assertEqual(len(page2), 1)
+            self.assertEqual(
+                [b.url for b in page1] + [b.url for b in page2],
+                [b.url for b in all_results],
+            )
 
             await client.close()
 
@@ -186,6 +250,36 @@ class TestPinboardClientIntegration(unittest.TestCase):
             # Test filtering by non-existent tag
             results = await client.get_bookmarks_by_tags(["nonexistent"], limit=10)
             self.assertEqual(len(results), 0)
+
+            await client.close()
+
+        asyncio.run(run_test())
+
+    @patch("pinboard_mcp_server.client.pinboard.Pinboard")
+    def test_bookmarks_by_tags_offset_pagination(self, mock_pinboard_class):
+        """Test that offset pages through tag-filtered results without gaps or overlap."""
+
+        async def run_test():
+            mock_bookmarks = self.create_mock_pinboard_bookmarks(self.sample_posts_data)
+            mock_pb = MagicMock()
+            mock_pb.posts.recent.return_value = {"posts": mock_bookmarks}
+            mock_pb.posts.update.return_value = {"update_time": "2024-01-15T12:00:00Z"}
+            mock_pinboard_class.return_value = mock_pb
+
+            client = PinboardClient(self.test_token)
+
+            all_results = await client.get_bookmarks_by_tags(["python"], limit=10)
+            self.assertEqual(len(all_results), 3)
+
+            page1 = await client.get_bookmarks_by_tags(["python"], limit=2, offset=0)
+            page2 = await client.get_bookmarks_by_tags(["python"], limit=2, offset=2)
+
+            self.assertEqual(len(page1), 2)
+            self.assertEqual(len(page2), 1)
+            self.assertEqual(
+                [b.url for b in page1] + [b.url for b in page2],
+                [b.url for b in all_results],
+            )
 
             await client.close()
 

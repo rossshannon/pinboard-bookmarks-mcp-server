@@ -153,17 +153,19 @@ class PinboardClient:
         from_date: datetime | None,
         to_date: datetime | None,
         limit: int,
+        offset: int = 0,
     ) -> None:
         """Search for bookmarks by tag using Pinboard API directly.
 
-        This is much more efficient than downloading all bookmarks.
+        This is much more efficient than downloading all bookmarks. Uses
+        Pinboard's native `start`/`results` params for server-side pagination.
         Modifies the matches list in-place.
         """
 
         def _get_posts_by_tag() -> Any:
             self._rate_limit_sync()
             # Use posts.all with tag filter - much more efficient
-            params = {"tag": tag}
+            params: dict[str, Any] = {"tag": tag, "start": offset, "results": limit}
             if from_date:
                 params["fromdt"] = from_date.strftime("%Y-%m-%dT%H:%M:%SZ")
             if to_date:
@@ -217,31 +219,33 @@ class PinboardClient:
 
         return self._tag_cache or []
 
-    async def search_bookmarks(self, query: str, limit: int = 20) -> list[Bookmark]:
+    async def search_bookmarks(
+        self, query: str, limit: int = 20, offset: int = 0
+    ) -> list[Bookmark]:
         """Search bookmarks by query string."""
         # Check query cache first
-        cache_key = f"search:{query}:{limit}"
+        cache_key = f"search:{query}:{limit}:{offset}"
         if cache_key in self._query_cache:
             return self._query_cache[cache_key]
 
-        # First try with recent bookmarks
-        bookmarks = await self.get_all_bookmarks()
         query_lower = query.lower()
 
-        # Search in title, notes, and tags
-        matches = []
-        for bookmark in bookmarks:
-            if (
+        def _text_matches(bookmark: Bookmark) -> bool:
+            return (
                 query_lower in bookmark.title.lower()
                 or query_lower in bookmark.notes.lower()
                 or any(query_lower in tag.lower() for tag in bookmark.tags)
-            ):
-                matches.append(bookmark)
-                if len(matches) >= limit:
-                    break
+            )
 
-        # If no matches found, try optimized strategies before full expansion
-        if not matches:
+        # First try with recent bookmarks
+        bookmarks = await self.get_all_bookmarks()
+        matches = [bookmark for bookmark in bookmarks if _text_matches(bookmark)]
+
+        # If the recent-bookmarks cache doesn't even hold enough matches to
+        # reach the requested offset, try more targeted/comprehensive
+        # strategies before giving up. (At offset=0 this is equivalent to the
+        # original "no matches at all" check.)
+        if len(matches) <= offset:
             # First, check if the query matches a tag exactly - use direct tag search
             tags = await self.get_all_tags()
             exact_tag_match = next(
@@ -249,34 +253,33 @@ class PinboardClient:
             )
 
             if exact_tag_match:
-                # Use efficient tag-based search
+                # Use efficient tag-based search, paginated at the API level
+                tag_matches: list[Bookmark] = []
                 try:
                     await self._search_by_tag_direct(
-                        exact_tag_match, matches, None, None, limit
+                        exact_tag_match, tag_matches, None, None, offset + limit
                     )
                 except Exception:
                     pass  # Fall through to expanded search if tag search fails
+                if len(tag_matches) > len(matches):
+                    matches = tag_matches
 
-            # If still no matches and we haven't expanded yet, try with more data
+            # If still not enough and we haven't expanded yet, try with more data
             # This allows comprehensive free-text search but limits scope for safety
-            if not matches and not self._has_expanded_data:
+            if len(matches) <= offset and not self._has_expanded_data:
                 bookmarks = await self.get_all_bookmarks(expand_if_needed=True)
-                for bookmark in bookmarks:
-                    if (
-                        query_lower in bookmark.title.lower()
-                        or query_lower in bookmark.notes.lower()
-                        or any(query_lower in tag.lower() for tag in bookmark.tags)
-                    ):
-                        matches.append(bookmark)
-                        if len(matches) >= limit:
-                            break
+                expanded_matches = [b for b in bookmarks if _text_matches(b)]
+                if len(expanded_matches) > len(matches):
+                    matches = expanded_matches
+
+        result = matches[offset : offset + limit]
 
         # Cache the result
-        self._query_cache[cache_key] = matches
-        return matches
+        self._query_cache[cache_key] = result
+        return result
 
     async def search_bookmarks_extended(
-        self, query: str, days_back: int = 365, limit: int = 100
+        self, query: str, days_back: int = 365, limit: int = 100, offset: int = 0
     ) -> list[Bookmark]:
         """Extended search that looks further back in time for comprehensive results.
 
@@ -284,11 +287,12 @@ class PinboardClient:
             query: Search query to match against bookmark titles, notes, and tags
             days_back: How many days back to search (default 1 year)
             limit: Maximum number of results to return (default 100)
+            offset: Number of matching results to skip, for pagination (default 0)
 
         Note: This provides generous data for LLM filtering and analysis.
         Returns comprehensive results that the client can intelligently filter.
         """
-        cache_key = f"extended_search:{query}:{days_back}:{limit}"
+        cache_key = f"extended_search:{query}:{days_back}:{limit}:{offset}"
         if cache_key in self._query_cache:
             return self._query_cache[cache_key]
 
@@ -301,17 +305,22 @@ class PinboardClient:
         )
 
         matches: list[Bookmark] = []
+        tag_search_failed = False
         if exact_tag_match:
-            # Use efficient tag-based search for exact matches
+            # Use efficient tag-based search for exact matches, paginated
+            # server-side via Pinboard's start/results params.
             try:
                 await self._search_by_tag_direct(
-                    exact_tag_match, matches, None, None, limit
+                    exact_tag_match, matches, None, None, limit, offset
                 )
             except Exception:
-                pass
+                tag_search_failed = True
 
-        # If no tag match or tag search failed, do extended time-based search
-        if not matches:
+        # If there's no tag match or the tag search failed, do extended
+        # time-based search. An empty result from a *successful* tag search
+        # just means this offset is past the end of that tag's bookmarks -
+        # not a reason to fall back to a different, non-tag enumeration.
+        if not exact_tag_match or tag_search_failed:
 
             def _get_extended_posts() -> Any:
                 self._rate_limit_sync()
@@ -324,19 +333,22 @@ class PinboardClient:
             posts_list = result if isinstance(result, list) else []
 
             # Search through the extended results
+            time_matches = []
             for post in posts_list:
-                if len(matches) >= limit:
-                    break
-
                 bookmark = Bookmark.from_pinboard(self._convert_pinboard_bookmark(post))
                 if (
                     query_lower in bookmark.title.lower()
                     or query_lower in bookmark.notes.lower()
                     or any(query_lower in tag.lower() for tag in bookmark.tags)
                 ):
-                    matches.append(bookmark)
+                    time_matches.append(bookmark)
 
-        # Sort by most recent first
+            # Sort by most recent first, then apply the requested page
+            time_matches.sort(key=lambda b: b.saved_at, reverse=True)
+            matches = time_matches[offset : offset + limit]
+
+        # Sort by most recent first (a no-op for the time-based branch,
+        # which is already sorted; load-bearing for the tag-direct branch)
         matches.sort(key=lambda b: b.saved_at, reverse=True)
 
         # Cache the result
@@ -344,10 +356,10 @@ class PinboardClient:
         return matches
 
     async def get_recent_bookmarks(
-        self, days: int = 7, limit: int = 20
+        self, days: int = 7, limit: int = 20, offset: int = 0
     ) -> list[Bookmark]:
         """Get bookmarks from the last N days."""
-        cache_key = f"recent:{days}:{limit}"
+        cache_key = f"recent:{days}:{limit}:{offset}"
         if cache_key in self._query_cache:
             return self._query_cache[cache_key]
 
@@ -362,7 +374,7 @@ class PinboardClient:
         ]
         recent.sort(key=lambda b: b.saved_at, reverse=True)
 
-        result = recent[:limit]
+        result = recent[offset : offset + limit]
         self._query_cache[cache_key] = result
         return result
 
@@ -372,9 +384,12 @@ class PinboardClient:
         from_date: datetime | None = None,
         to_date: datetime | None = None,
         limit: int = 20,
+        offset: int = 0,
     ) -> list[Bookmark]:
         """Get bookmarks filtered by tags and optional date range."""
-        cache_key = f"tags:{':'.join(sorted(tags))}:{from_date}:{to_date}:{limit}"
+        cache_key = (
+            f"tags:{':'.join(sorted(tags))}:{from_date}:{to_date}:{limit}:{offset}"
+        )
         if cache_key in self._query_cache:
             return self._query_cache[cache_key]
 
@@ -382,7 +397,7 @@ class PinboardClient:
         bookmarks = await self.get_all_bookmarks()
         tag_set = {tag.lower() for tag in tags}
 
-        matches = []
+        filtered = []
         for bookmark in bookmarks:
             bookmark_tags = {tag.lower() for tag in bookmark.tags}
 
@@ -395,24 +410,30 @@ class PinboardClient:
                 if to_date and bookmark_date > to_date:
                     continue
 
-                matches.append(bookmark)
-                if len(matches) >= limit:
-                    break
+                filtered.append(bookmark)
 
-        # If no matches found, try a targeted search by tag using Pinboard API
-        # This is much more efficient than downloading all bookmarks and gets EVERYTHING
-        if not matches and len(tags) == 1:
+        filtered.sort(key=lambda b: b.saved_at, reverse=True)
+        matches = filtered[offset : offset + limit]
+
+        # If the recent-bookmarks cache doesn't even hold enough matches to
+        # reach the requested offset, fall back to a targeted search by tag
+        # using the Pinboard API directly. (At offset=0 this is equivalent to
+        # the original "no matches at all" check.) This is much more
+        # efficient than downloading all bookmarks, gets EVERYTHING, and
+        # supports true server-side pagination via start/results.
+        if len(filtered) <= offset and len(tags) == 1:
             # For single tag searches, use posts.all with tag filter - gets ALL bookmarks with that tag
+            direct_matches: list[Bookmark] = []
             try:
                 await self._search_by_tag_direct(
-                    tags[0], matches, from_date, to_date, limit
+                    tags[0], direct_matches, from_date, to_date, limit, offset
                 )
             except Exception:
                 # If tag search fails, there's likely no bookmarks with that tag
-                pass  # matches will remain empty
-
-        # Sort by most recent first
-        matches.sort(key=lambda b: b.saved_at, reverse=True)
+                pass  # direct_matches will remain empty
+            if direct_matches:
+                direct_matches.sort(key=lambda b: b.saved_at, reverse=True)
+                matches = direct_matches
 
         self._query_cache[cache_key] = matches
         return matches
