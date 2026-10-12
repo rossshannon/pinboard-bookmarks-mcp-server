@@ -59,21 +59,33 @@ describe('SafeLink', () => {
     expect(breadcrumbs.entries()).toEqual([{ detail: 'https://pinboard.in/u:ross/t:mcp/', label: 'openLink:requested' }])
   })
 
-  it('lets modified clicks keep their native new-tab behaviour', () => {
+  it('sends cmd-, ctrl- and shift-clicks and middle-clicks to the host too: the sandbox can open no tab itself', () => {
     const breadcrumbs = createBreadcrumbLog()
     vi.spyOn(console, 'log').mockImplementation((): void => { /* no-op: forensics logging is not under test here */ })
     const openLink = vi.fn().mockResolvedValue({})
 
-    render(<SafeLink links={{ openLink }} breadcrumbs={breadcrumbs} url="https://pinboard.in/u:ross/t:mcp/">Bookmark title</SafeLink>)
+    render(<SafeLink breadcrumbs={breadcrumbs} links={{ openLink }} url="https://pinboard.in/u:ross/t:mcp/">Bookmark title</SafeLink>)
     const anchor = screen.getByRole('link', { name: 'Bookmark title' })
 
-    // cmd-click, ctrl-click, shift-click, alt-click: default NOT prevented
-    // (fireEvent.click returns true) and nothing routed through the host.
-    for (const modifier of [{ metaKey: true }, { ctrlKey: true }, { shiftKey: true }, { altKey: true }]) {
-      expect(fireEvent.click(anchor, modifier)).toBe(true)
+    for (const modifier of [{ metaKey: true }, { ctrlKey: true }, { shiftKey: true }]) {
+      expect(fireEvent.click(anchor, modifier)).toBe(false)
     }
+    expect(fireEvent(anchor, new MouseEvent('auxclick', { bubbles: true, button: 1, cancelable: true }))).toBe(false)
+
+    expect(openLink).toHaveBeenCalledTimes(4)
+    expect(openLink).toHaveBeenLastCalledWith({ url: 'https://pinboard.in/u:ross/t:mcp/' })
+  })
+
+  it('leaves alt-click and right-click to the browser', () => {
+    const breadcrumbs = createBreadcrumbLog()
+    const openLink = vi.fn().mockResolvedValue({})
+
+    render(<SafeLink breadcrumbs={breadcrumbs} links={{ openLink }} url="https://pinboard.in/u:ross/t:mcp/">Bookmark title</SafeLink>)
+    const anchor = screen.getByRole('link', { name: 'Bookmark title' })
+
+    expect(fireEvent.click(anchor, { altKey: true })).toBe(true)
+    expect(fireEvent(anchor, new MouseEvent('auxclick', { bubbles: true, button: 2, cancelable: true }))).toBe(true)
     expect(openLink).not.toHaveBeenCalled()
-    expect(breadcrumbs.entries()).toEqual([])
   })
 
   it('records a breadcrumb if the host rejects the openLink request', async () => {

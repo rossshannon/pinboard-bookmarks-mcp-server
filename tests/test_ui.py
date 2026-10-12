@@ -38,6 +38,45 @@ async def mcp_client(mock_client):
         yield client
 
 
+def _json_type(value: Any) -> str:
+    """A value's JSON type, with an array's element types: ``array<string>``."""
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "boolean"
+    if isinstance(value, int):
+        return "integer"
+    if isinstance(value, float):
+        return "number"
+    if isinstance(value, str):
+        return "string"
+    if isinstance(value, list):
+        elements = sorted({_json_type(item) for item in value})
+        return f"array<{'|'.join(elements)}>" if elements else "array"
+    return "object"
+
+
+def _types_by_key(records: list[dict[str, Any]]) -> dict[str, set[str]]:
+    """Every JSON type each key takes across ``records``; an empty array matches any array."""
+    types: dict[str, set[str]] = {}
+    for record in records:
+        for key, value in record.items():
+            types.setdefault(key, set()).add(_json_type(value))
+    return types
+
+
+def _assert_types_within(
+    fixture: dict[str, Any], allowed: dict[str, set[str]], where: str
+) -> None:
+    for key, value in fixture.items():
+        kind = _json_type(value)
+        if kind == "array" and any(t.startswith("array") for t in allowed[key]):
+            continue
+        assert kind in allowed[key], (
+            f"{where}: {key} is {kind}, tools send {allowed[key]}"
+        )
+
+
 def _fixtures(card: str) -> dict[str, Any]:
     return json.loads((FIXTURES / f"{card}.json").read_text(encoding="utf-8"))
 
@@ -79,7 +118,11 @@ class TestCardResources:
             resource = resources[ui.card_uri(card)]
             assert resource.mime_type == "text/html;profile=mcp-app"
             assert resource.meta is not None
-            assert resource.meta["ui"] == {"prefersBorder": True}
+            assert resource.meta["ui"] == ui.CARD_RESOURCE_META["ui"]
+            assert resource.meta["ui"]["prefersBorder"] is True
+            assert resource.meta["ui"]["csp"] == {
+                "resourceDomains": list(ui.HOST_FONT_ORIGINS)
+            }
 
     async def test_reading_a_card_serves_its_built_document(self, mcp_client):
         for card in ui.CARDS:
@@ -116,13 +159,14 @@ class TestCardResources:
             assert ui.card_uri(card) == f"ui://pinboard/{card.name}@{digest[:16]}"
 
     def test_documents_load_nothing_from_the_network(self):
-        # The resources declare no CSP origins, so the host would block any
-        # external script, stylesheet, font or image a card tried to load.
+        # The CSP admits only the host's font origins, so anything the card
+        # itself tried to load would be blocked: everything must be inline.
         for card in ui.CARDS:
             html = ui.card_html(card)
             assert not re.search(r"<script[^>]+\bsrc=", html)
             assert not re.search(r"<link[^>]+\bhref=", html)
             assert "@import" not in html
+            assert not re.search(r"url\(\s*['\"]?\s*(?:https?:)?//", html, re.I)
 
 
 class TestMissingBuild:
@@ -218,12 +262,18 @@ class TestFixtureContract:
             "search_bookmarks": {"query": "python"},
             "search_bookmarks_extended": {"query": "python"},
             "list_recent_bookmarks": {},
-            "list_bookmarks_by_tags": {"tags": ["python"], "from_date": "2024-01-01"},
+            "list_bookmarks_by_tags": {
+                "tags": ["python"],
+                "from_date": "2024-01-01",
+                "to_date": "2024-12-31",
+            },
+            # No dates: from_date and to_date come back null.
+            "list_bookmarks_by_tags#undated": {"tags": ["python"]},
             "list_tags": {},
         }
         outputs = {}
         for name, arguments in calls.items():
-            result = await client.call_tool(name, arguments)
+            result = await client.call_tool(name.split("#")[0], arguments)
             assert result.structured_content is not None
             outputs[name] = result.structured_content
         return outputs
@@ -241,6 +291,24 @@ class TestFixtureContract:
             for bookmark in content["bookmarks"]:
                 assert set(bookmark) == real_bookmark_keys, scenario
 
+    async def test_bookmark_fixtures_have_a_real_tool_s_types(self, mcp_client):
+        # Names alone let a fixture send `total: "4"` or `tags: "a,b"` that no
+        # tool ever would, and the cards would be tested against it.
+        outputs = await self._real_outputs(mcp_client)
+        bookmark_outputs = [v for k, v in outputs.items() if k != "list_tags"]
+        top_level = _types_by_key(bookmark_outputs)
+        rows = _types_by_key(
+            [row for out in bookmark_outputs for row in out["bookmarks"]]
+        )
+
+        for scenario, result in _fixtures("bookmarks").items():
+            if result.get("isError"):
+                continue
+            content = result["structuredContent"]
+            _assert_types_within(content, top_level, scenario)
+            for bookmark in content["bookmarks"]:
+                _assert_types_within(bookmark, rows, scenario)
+
     async def test_tag_fixtures_have_list_tags_shape(self, mcp_client):
         outputs = await self._real_outputs(mcp_client)
         real_keys = set(outputs["list_tags"]["result"][0])
@@ -252,6 +320,9 @@ class TestFixtureContract:
             assert set(result["structuredContent"]) == {"result"}, scenario
             for entry in result["structuredContent"]["result"]:
                 assert set(entry) == real_keys, scenario
+                _assert_types_within(
+                    entry, _types_by_key(outputs["list_tags"]["result"]), scenario
+                )
 
     async def test_error_fixtures_match_how_fastmcp_reports_a_failure(self, mcp_client):
         result = await mcp_client.call_tool_mcp(

@@ -3,12 +3,13 @@
  * &Open card shell; the scheme rule is Pinboard's (see `safe-url.ts`).
  *
  * Renders an anchor only for an `http(s)://` URL, so a hostile URL renders no
- * anchor at all rather than a neutered one. A real anchor keeps native
- * affordances — middle-click, cmd/ctrl-click, "copy link address" — because
- * only the plain primary click is intercepted.
+ * anchor at all rather than a neutered one. A real anchor keeps "copy link
+ * address" and the status-bar preview.
  *
- * That click goes to the shell's link opener (`link-opener.ts`): the host
- * sandbox blocks top navigation, so the host has to open it.
+ * Every click that would open it — plain, cmd/ctrl/shift-click, middle-click —
+ * goes to the shell's link opener (`link-opener.ts`). The sandbox has no
+ * `allow-popups`, so the browser's own new-tab handling would do nothing; the
+ * host is the only thing that can open a link.
  */
 
 import type { MouseEvent, ReactNode } from 'react'
@@ -31,9 +32,9 @@ export interface SafeLinkProperties {
 export const SafeLink = ({ breadcrumbs, children, className, links, title, url }: SafeLinkProperties): ReactNode => {
   if (!isWebUrl(url)) return null
 
-  const handleClick = (event: MouseEvent<HTMLAnchorElement>): void => {
-    // Modified primary clicks keep their native new-tab/window behaviour.
-    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
+  const open = (event: MouseEvent<HTMLAnchorElement>): void => {
+    // Alt-click is "download" in most browsers; nothing for the host to do.
+    if (event.altKey) return
     event.preventDefault()
     breadcrumbs.record('openLink:requested', url)
     links.openLink({ url }).catch((error: unknown) => {
@@ -42,7 +43,19 @@ export const SafeLink = ({ breadcrumbs, children, className, links, title, url }
   }
 
   return (
-    <a className={className} href={url} onClick={handleClick} rel="noreferrer noopener" target="_blank" title={title}>
+    <a
+      className={className}
+      href={url}
+      onAuxClick={(event) => {
+        if (event.button === 1) open(event)
+      }}
+      onClick={(event) => {
+        if (event.button === 0) open(event)
+      }}
+      rel="noreferrer noopener"
+      target="_blank"
+      title={title}
+    >
       {children}
     </a>
   )

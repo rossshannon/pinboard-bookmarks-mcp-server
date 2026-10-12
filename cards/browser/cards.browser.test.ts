@@ -39,10 +39,15 @@ const render = async (options: RenderOptions): Promise<{ errors: string[], frame
   return { errors, frame, page }
 }
 
-/** The card's own document height against the iframe the host sized from its reports. */
+/**
+ * The card's content height against the inside of the iframe the host sized
+ * from its reports. Content is the body's own box, not
+ * `documentElement.scrollHeight`, which never reads less than the viewport and
+ * so would pass a frame left too tall.
+ */
 const heights = async (page: Page, frame: Frame): Promise<{ document: number, iframe: number }> => ({
-  document: await frame.evaluate(() => document.documentElement.scrollHeight),
-  iframe: await page.locator('#card').evaluate(element => element.getBoundingClientRect().height),
+  document: await frame.evaluate(() => Math.ceil(document.body.getBoundingClientRect().height)),
+  iframe: await page.locator('#card').evaluate(element => element.clientHeight),
 })
 
 describe.each(CARDS as readonly CardName[])('the %s card', (card) => {
@@ -58,7 +63,7 @@ describe.each(CARDS as readonly CardName[])('the %s card', (card) => {
       const overflow = await frame.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)
       expect(overflow).toBeLessThanOrEqual(0)
       const { document: documentHeight, iframe } = await heights(page, frame)
-      expect(Math.abs(iframe - documentHeight)).toBeLessThanOrEqual(2)
+      expect(Math.abs(iframe - documentHeight)).toBeLessThanOrEqual(1)
       await page.close()
     })
   })
@@ -97,11 +102,20 @@ describe('theming', () => {
     expect(await paint('light', 'dark')).toBe(light)
   })
 
+  // The paint again: `matchMedia` only echoes Playwright's own emulation.
   it('falls back to the reader’s own preference when the host reports none', async () => {
-    const { frame, page } = await render({ card: 'tags', hostTheme: false, scenario: 'normal', theme: 'dark' })
-    const scheme = await frame.evaluate(() => matchMedia('(prefers-color-scheme: dark)').matches)
-    expect(scheme).toBe(true)
-    await page.close()
+    const paint = async (os: 'dark' | 'light', hostTheme: boolean): Promise<string> => {
+      const { frame, page } = await render({ card: 'bookmarks', hostTheme, scenario: 'search', theme: os })
+      const colour = await frame.evaluate(() => getComputedStyle(document.querySelector('.card') ?? document.body).backgroundColor)
+      await page.close()
+      return colour
+    }
+
+    const dark = await paint('dark', true)
+    const light = await paint('light', true)
+    expect(dark).not.toBe(light)
+    expect(await paint('dark', false)).toBe(dark)
+    expect(await paint('light', false)).toBe(light)
   })
 })
 
@@ -114,7 +128,7 @@ describe('interaction', () => {
     await waitForSettle(page)
     const after = await heights(page, frame)
     expect(after.iframe).toBeGreaterThan(before)
-    expect(Math.abs(after.iframe - after.document)).toBeLessThanOrEqual(2)
+    expect(Math.abs(after.iframe - after.document)).toBeLessThanOrEqual(1)
 
     await frame.getByRole('button', { name: 'Show fewer' }).click()
     await waitForSettle(page)
@@ -129,6 +143,37 @@ describe('interaction', () => {
     await frame.getByRole('button', { name: 'Show all' }).click()
     await waitForSettle(page)
     expect((await heights(page, frame)).iframe).toBeGreaterThan(before)
+    await page.close()
+  })
+
+  it('opens a clamped note with "Show more" and grows the frame to fit it', async () => {
+    const { frame, page } = await render({ card: 'bookmarks', scenario: 'long' })
+    const notes = frame.locator('.bookmark__notes').first()
+    const clipped = (): Promise<boolean> => notes.evaluate(element => element.scrollHeight > element.clientHeight + 1)
+    expect(await clipped()).toBe(true)
+    const before = (await heights(page, frame)).iframe
+
+    await frame.getByRole('button', { name: 'Show more' }).click()
+    await waitForSettle(page)
+    expect(await clipped()).toBe(false)
+    const after = await heights(page, frame)
+    expect(after.iframe).toBeGreaterThan(before)
+    expect(Math.abs(after.iframe - after.document)).toBeLessThanOrEqual(1)
+    await page.close()
+  })
+
+  // Nothing in the card changed, so only the ResizeObserver can catch this.
+  it('follows a relayout the card did not cause, when the host narrows the frame', async () => {
+    const { frame, page } = await render({ card: 'bookmarks', scenario: 'search' })
+    const before = (await heights(page, frame)).iframe
+
+    await page.locator('#card').evaluate((element) => {
+      (element as HTMLElement).style.width = '300px'
+    })
+    await expect.poll(async () => {
+      const now = await heights(page, frame)
+      return now.iframe > before && Math.abs(now.iframe - now.document) <= 1
+    }, { timeout: 5000 }).toBe(true)
     await page.close()
   })
 

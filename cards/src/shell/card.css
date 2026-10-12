@@ -262,6 +262,33 @@ ul {
   overflow: hidden;
 }
 
+.bookmark__notes--open {
+  display: block;
+  -webkit-line-clamp: unset;
+  line-clamp: none;
+  overflow: visible;
+}
+
+/* A control that reads as a link: "Show more" under a clamped note. */
+.text-button {
+  appearance: none;
+  align-self: start;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--pb-link);
+  font: inherit;
+  font-size: var(--pb-text-sm);
+  line-height: var(--pb-text-sm-lh);
+  cursor: pointer;
+}
+
+@media (hover: hover) {
+  .text-button:hover {
+    text-decoration: underline;
+  }
+}
+
 .tags {
   display: flex;
   flex-wrap: wrap;

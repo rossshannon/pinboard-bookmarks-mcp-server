@@ -135,12 +135,28 @@ def tool_meta(
     return {"ui": {"resourceUri": card_uri(card)}}
 
 
-#: The ``_meta`` every card resource is served with. A card loads nothing from
-#: the network — no fonts, no images, no fetches — so it declares no CSP origins
-#: at all, and the host's default (block everything) is exactly right.
-#: ``prefersBorder`` asks the host to frame the card, which reads better in a
-#: transcript than a borderless panel.
-CARD_RESOURCE_META: dict[str, Any] = {"ui": {"prefersBorder": True}}
+#: Where hosts serve the fonts they hand a card in ``styles.css.fonts``: the
+#: card injects that CSS (``applyHostFonts``), and without the origins in its
+#: CSP the faces are blocked and it falls back to the system font. Claude's
+#: (the SDK documents Anthropic Sans on assets.anthropic.com) and Google Fonts,
+#: which the spec gives as the other common case. Font and stylesheet origins
+#: only in spirit: the card itself still fetches nothing.
+HOST_FONT_ORIGINS: tuple[str, ...] = (
+    "https://assets.anthropic.com",
+    "https://fonts.googleapis.com",
+    "https://fonts.gstatic.com",
+)
+
+#: The ``_meta`` every card resource is served with. ``csp`` admits the host's
+#: own fonts and nothing else: no fetches, no frames. ``prefersBorder`` asks the
+#: host to frame the card, which reads better in a transcript than a borderless
+#: panel.
+CARD_RESOURCE_META: dict[str, Any] = {
+    "ui": {
+        "csp": {"resourceDomains": list(HOST_FONT_ORIGINS)},
+        "prefersBorder": True,
+    }
+}
 
 
 def register_card_resources(mcp: Any) -> None:

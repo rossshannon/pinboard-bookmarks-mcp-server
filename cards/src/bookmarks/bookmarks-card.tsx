@@ -10,7 +10,7 @@
 
 import type { ReactNode } from 'react'
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 
 import type { CardRenderContext } from '../shell/card-shell.tsx'
 import type { BookmarkRow } from './read-bookmarks.ts'
@@ -30,6 +30,64 @@ import { matchedTags, readBookmarks } from './read-bookmarks.ts'
  * card, and the agent has every row anyway.
  */
 export const INITIAL_ROWS = 8
+
+interface NotesProperties {
+  readonly notes: string
+  readonly remeasure: () => void
+}
+
+/**
+ * A bookmark's notes, clamped to three lines so one essay doesn't swallow the
+ * card, with "Show more" whenever the clamp actually hides something. Whether
+ * it does is measured, not guessed from length: it depends on the frame's width.
+ */
+const Notes = ({ notes, remeasure }: NotesProperties): ReactNode => {
+  const reference = useRef<HTMLParagraphElement>(null)
+  const [open, setOpen] = useState(false)
+  const [clamped, setClamped] = useState(false)
+  const id = useId()
+
+  useLayoutEffect(() => {
+    const element = reference.current
+    if (!element || open) return undefined
+    const check = (): void => {
+      setClamped(element.scrollHeight > element.clientHeight + 1)
+    }
+    check()
+    globalThis.addEventListener('resize', check)
+    return () => {
+      globalThis.removeEventListener('resize', check)
+    }
+  }, [notes, open])
+
+  const mounted = useRef(false)
+  useEffect(() => {
+    if (!mounted.current) {
+      mounted.current = true
+      return
+    }
+    remeasure()
+  }, [open, remeasure])
+
+  return (
+    <>
+      <p className={open ? 'bookmark__notes bookmark__notes--open' : 'bookmark__notes'} id={id} ref={reference}>{notes}</p>
+      {(clamped || open) && (
+        <button
+          aria-controls={id}
+          aria-expanded={open}
+          className="text-button"
+          onClick={() => {
+            setOpen(current => !current)
+          }}
+          type="button"
+        >
+          {open ? 'Show less' : 'Show more'}
+        </button>
+      )}
+    </>
+  )
+}
 
 interface RowProperties {
   readonly context: CardRenderContext
@@ -53,7 +111,7 @@ const Bookmark = ({ context, matched, row }: RowProperties): ReactNode => {
           {saved !== undefined && <time dateTime={row.savedAt} title={instantTitle(row.savedAt)}>{saved}</time>}
         </p>
       )}
-      {row.notes !== undefined && <p className="bookmark__notes">{row.notes}</p>}
+      {row.notes !== undefined && <Notes notes={row.notes} remeasure={context.remeasure} />}
       {row.tags.length > 0 && (
         <ul aria-label="Tags" className="tags">
           {row.tags.map((tag, index) => {

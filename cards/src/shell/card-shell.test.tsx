@@ -226,14 +226,47 @@ describe('CardShell', () => {
     expect(screen.getByText('Card diagnostic')).toBeInTheDocument()
   })
 
-  it('shows the diagnostic card after 1.5s when the handshake never resolves', () => {
+  it('keeps a slow handshake on its skeleton past 1.5s, then renders without a diagnostic flash', () => {
     renderShell(true)
+    act(() => {
+      vi.advanceTimersByTime(3000)
+    })
+
+    expect(screen.queryByText('Card diagnostic')).toBeNull()
+    expect(screen.getByTestId('skeleton')).toBeInTheDocument()
+
+    connect()
+    deliver({ structuredContent: { name: 'slow' } })
+    expect(screen.getByTestId('rendered')).toHaveTextContent('slow')
+  })
+
+  it('says it is connecting when the handshake is slow and the card has no skeleton', () => {
+    renderShell()
     act(() => {
       vi.advanceTimersByTime(1500)
     })
 
+    expect(screen.getByText('Connecting to the host…')).toBeInTheDocument()
+  })
+
+  it('shows the diagnostic card after ~12s when the handshake never resolves', () => {
+    renderShell(true)
+    act(() => {
+      vi.advanceTimersByTime(12_000)
+    })
+
     expect(screen.getByText('Card diagnostic')).toBeInTheDocument()
     expect(screen.queryByTestId('skeleton')).toBeNull()
+  })
+
+  it('shows the diagnostic card at once when the handshake is rejected', () => {
+    renderShell(true)
+    act(() => {
+      setMockState?.({ app: null, error: new Error('handshake rejected'), isConnected: false })
+    })
+
+    expect(screen.getByText('Card diagnostic')).toBeInTheDocument()
+    expect(screen.getByText('ui/initialize error: handshake rejected')).toBeInTheDocument()
   })
 
   it('never paints a state card over content that has rendered', () => {

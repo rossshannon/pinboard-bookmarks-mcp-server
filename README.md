@@ -139,7 +139,7 @@ What are my most used tags?
 
 ### Result cards (MCP Apps)
 
-Each tool links to a `ui://pinboard/…` card: a list of bookmarks (title, site, date, notes and tags, with the tags you searched for highlighted) for the four bookmark tools, and a bar chart of your most-used tags with a filter for `list_tags`. The cards follow the host's light or dark theme, open links through the host, and load nothing from the network. Hosts without MCP Apps support ignore them.
+Each tool links to a `ui://pinboard/…` card: a list of bookmarks (title, site, date, notes and tags, with the tags you searched for highlighted) for the four bookmark tools, and a bar chart of your most-used tags with a filter for `list_tags`. The cards follow the host's light or dark theme, use the host's fonts, open links through the host, and load nothing else from the network. Hosts without MCP Apps support ignore them.
 
 The cards are React, built into self-contained HTML under `src/pinboard_mcp_server/ui/generated/` and shipped with the package, so running the server needs no Node. See [docs/mcp-apps-ui.md](docs/mcp-apps-ui.md) for how they work and how to change them.
 

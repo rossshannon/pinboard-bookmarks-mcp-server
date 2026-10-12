@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, within } from '@testing-library/react'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import { fixtureData, fixtureError } from '../../fixtures/index.ts'
 import { stubContext } from '../../test-support/context.ts'
@@ -126,6 +126,35 @@ describe('BookmarksCard', () => {
     const bookmark = (data['bookmarks'] as Array<{ title: string }>)[0]
     expect(screen.getByRole('link')).toHaveTextContent(bookmark?.title ?? '')
     expect(screen.getAllByRole('listitem').filter(item => item.classList.contains('tag'))).toHaveLength(27)
+  })
+
+  it('offers "Show more" on a note the clamp cuts short, and opens it', () => {
+    // jsdom has no layout: say the clamped note is taller than its box.
+    const scroll = vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockImplementation(function (this: HTMLElement) {
+      return this.classList.contains('bookmark__notes') ? 120 : 0
+    })
+    const client = vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockImplementation(function (this: HTMLElement) {
+      return this.classList.contains('bookmark__notes') ? 60 : 0
+    })
+    const context = stubContext()
+    renderScenario('long', context)
+
+    const more = screen.getByRole('button', { name: 'Show more' })
+    expect(more).toHaveAttribute('aria-expanded', 'false')
+    fireEvent.click(more)
+
+    const less = screen.getByRole('button', { name: 'Show less' })
+    expect(less).toHaveAttribute('aria-expanded', 'true')
+    expect(document.getElementById(less.getAttribute('aria-controls') ?? '')).toHaveClass('bookmark__notes--open')
+    expect(context.remeasure).toHaveBeenCalledOnce()
+    scroll.mockRestore()
+    client.mockRestore()
+  })
+
+  it('offers no "Show more" on a note that fits', () => {
+    renderScenario('search')
+
+    expect(screen.queryByRole('button', { name: 'Show more' })).toBeNull()
   })
 
   it('draws a tool failure in place of the list', () => {

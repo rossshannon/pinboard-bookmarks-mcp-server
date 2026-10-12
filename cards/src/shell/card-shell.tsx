@@ -7,11 +7,13 @@
  *
  *   boot -> Rendered immediately if `window.openai.toolOutput` is already
  *     present (the ChatGPT fast path).
- *   boot -> after 1.5s, if nothing has rendered: Waiting (handshake resolved,
- *     tool likely still running) or Diagnostic (handshake rejected or silent).
+ *   boot -> after 1.5s, if nothing has rendered: Waiting, whether or not the
+ *     handshake has resolved yet (a slow host is not a broken one).
+ *   Any state -> Diagnostic at once when the handshake is rejected.
  *     A card that passes a `skeleton` draws it from the first render until
  *     content or the diagnostic replaces it.
- *   Waiting -> Diagnostic after a further 10.5s (~12s in all).
+ *   Waiting -> Diagnostic after a further 10.5s (~12s in all): the tool, or
+ *     the handshake, never answered.
  *   Any state -> Rendered on a tool-result, before or after the handshake.
  *   Rendered is ABSORBING: derived from "is there render data yet", so no
  *     later timer or connect error can paint a state card over content.
@@ -22,9 +24,13 @@
  * tool-result is never missed. `autoResize: false`: sizing is `sizing.ts`'s
  * settle logic, not the SDK's forever-observing `ResizeObserver`.
  *
- * Two departures from the &Open shell. A card here can grow after it settles
+ * Departures from the &Open shell. A card here can grow after it settles
  * (a "Show all" press), so the render context carries `remeasure`, which
- * re-arms the size reporter for one more settle window. And the shell adopts
+ * re-arms the size reporter for one more settle window; and once content has
+ * rendered, a `ResizeObserver` on the body does the same for any change of
+ * height nobody announced — the host resizing the frame's width, a host font
+ * arriving late. (Only on content: the skeleton fills the viewport, and
+ * watching it would chase the frame's own height.) And the shell adopts
  * the host's theme and style variables (`host-theme.ts`) rather than holding a
  * brand palette apart from them.
  */
@@ -303,18 +309,16 @@ export const CardShell = ({ appName, children, skeleton, title }: CardShellPrope
 
   useEffect(() => {
     let waitingTimer: ReturnType<typeof setTimeout> | undefined
+    // A handshake still going at 1.5s gets the same patience as a tool still
+    // running: the &Open shell called it dead there, and a slow host flashed
+    // the diagnostic before its card appeared. A rejected one is handled below.
     const initialTimer = setTimeout(() => {
       if (hasRenderedReference.current) return
-      if (isConnectedReference.current) {
-        setStatePhase('waiting')
-        waitingTimer = setTimeout(() => {
-          if (hasRenderedReference.current) return
-          setStatePhase('diagnostic')
-        }, WAITING_TO_DIAGNOSTIC_MS)
-      }
-      else {
+      setStatePhase(current => current === 'diagnostic' ? current : 'waiting')
+      waitingTimer = setTimeout(() => {
+        if (hasRenderedReference.current) return
         setStatePhase('diagnostic')
-      }
+      }, WAITING_TO_DIAGNOSTIC_MS)
     }, STATE_CARD_DELAY_MS)
     return () => {
       clearTimeout(initialTimer)
@@ -355,6 +359,30 @@ export const CardShell = ({ appName, children, skeleton, title }: CardShellPrope
       setCrossfadeDone(true)
     }
   }, [generation])
+
+  const hasContent = data !== undefined || resultError !== undefined
+  useEffect(() => {
+    if (!hasContent || typeof ResizeObserver === 'undefined') return undefined
+    let lastHeight: number | undefined
+    const observer = new ResizeObserver(() => {
+      const { height } = measureDocument()
+      // The first callback is the observation starting, not a change.
+      if (lastHeight !== undefined && Math.abs(height - lastHeight) >= 1) {
+        breadcrumbs.record('size:relayout', String(height))
+        sizeReporter.onRender()
+      }
+      lastHeight = height
+    })
+    observer.observe(document.body)
+    return () => {
+      observer.disconnect()
+    }
+  }, [breadcrumbs, hasContent, sizeReporter])
+
+  // A rejected handshake is an answer, not a delay: show why straight away.
+  useEffect(() => {
+    if (error && !hasRenderedReference.current) setStatePhase('diagnostic')
+  }, [error])
 
   useEffect(() => {
     if (data !== undefined || resultError !== undefined) return
@@ -421,7 +449,7 @@ export const CardShell = ({ appName, children, skeleton, title }: CardShellPrope
   if (statePhase === 'waiting') {
     return (
       <Card>
-        <p className="state-detail">Waiting for the tool result…</p>
+        <p className="state-detail">{isConnected ? 'Waiting for the tool result…' : 'Connecting to the host…'}</p>
       </Card>
     )
   }
