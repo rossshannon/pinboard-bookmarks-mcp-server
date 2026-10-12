@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest'
 import { fixtureData, fixtureError } from '../../fixtures/index.ts'
 import { stubContext } from '../../test-support/context.ts'
 import { filterTags, readTags } from './read-tags.ts'
-import { INITIAL_TAGS, TagsCard } from './tags-card.tsx'
+import { INITIAL_TAGS, MAX_TAGS, TagsCard } from './tags-card.tsx'
 
 const renderScenario = (scenario: string, context = stubContext()): ReturnType<typeof render> =>
   render(<TagsCard context={context} data={fixtureData('tags', scenario)} />)
@@ -36,6 +36,16 @@ describe('TagsCard', () => {
 
     expect(tagRows()).toHaveLength(42)
     expect(context.remeasure).toHaveBeenCalledOnce()
+  })
+
+  it('offers only the top MAX_TAGS past the cap, and says the filter finds the rest', () => {
+    const many = Array.from({ length: MAX_TAGS + 50 }, (_, index) => ({ count: 1000 - index, tag: `t${String(index)}` }))
+    render(<TagsCard context={stubContext()} data={{ result: many }} />)
+
+    fireEvent.click(screen.getByRole('button', { name: `Show top ${String(MAX_TAGS)}` }))
+
+    expect(tagRows()).toHaveLength(MAX_TAGS)
+    expect(screen.getByText(`Top ${String(MAX_TAGS)} of ${String(MAX_TAGS + 50)} tags: filter to find the rest`)).toBeInTheDocument()
   })
 
   it('filters as the reader types, and says when nothing matches', () => {

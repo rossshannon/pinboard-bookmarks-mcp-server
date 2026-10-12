@@ -44,6 +44,10 @@ describe('extractToolResult', () => {
     expect(extractToolResult({ content: [{ text: 'null' }] })).toBeUndefined()
   })
 
+  it('wraps a JSON array in content[0].text as `result`, as structuredContent wraps a list', () => {
+    expect(extractToolResult({ content: [{ text: '[{"tag":"a","count":1}]' }] })).toEqual({ result: [{ count: 1, tag: 'a' }] })
+  })
+
   it('returns undefined when there is no content, structuredContent, or toolOutput', () => {
     expect(extractToolResult({})).toBeUndefined()
   })

@@ -58,7 +58,7 @@ describe('SafeLink', () => {
     expect(event).toBe(false) // fireEvent.click returns false when preventDefault was called
     expect(breadcrumbs.entries()).toEqual([{ detail: 'https://pinboard.in/u:ross/t:mcp/', label: 'openLink:raw-fallback' }])
     expect(postMessage).toHaveBeenCalledExactlyOnceWith(
-      { jsonrpc: '2.0', method: 'ui/open-link', params: { url: 'https://pinboard.in/u:ross/t:mcp/' } },
+      { id: expect.stringMatching(/^pinboard-card-open-link-\d+$/) as unknown, jsonrpc: '2.0', method: 'ui/open-link', params: { url: 'https://pinboard.in/u:ross/t:mcp/' } },
       '*',
     )
   })

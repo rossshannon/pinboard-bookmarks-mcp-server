@@ -48,6 +48,9 @@ export const extractToolResult = (result?: CardToolResultLike | null): Record<st
   if (typeof text !== 'string') return undefined
   try {
     const parsed: unknown = JSON.parse(text)
+    // A tool returning a list (`list_tags`) sends a JSON array; FastMCP's
+    // structuredContent wraps the same list as `{ result: [...] }`.
+    if (Array.isArray(parsed)) return { result: parsed }
     return isRecord(parsed) ? parsed : undefined
   }
   catch {

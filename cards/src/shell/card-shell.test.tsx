@@ -134,10 +134,14 @@ describe('CardShell', () => {
     expect(screen.getByTestId('rendered')).toHaveTextContent('Pinboard::app::ok')
   })
 
-  it('renders a result delivered before the handshake resolves', () => {
+  it('renders a result delivered before the handshake resolves, with no app for links until it does', () => {
     renderShell()
     deliver({ structuredContent: { name: 'early' } })
 
+    // An App that hasn't connected would take a click and never answer it;
+    // with none, SafeLink posts the request itself.
+    expect(screen.getByTestId('rendered')).toHaveTextContent('early::no-app::ok')
+    connect()
     expect(screen.getByTestId('rendered')).toHaveTextContent('early::app::ok')
   })
 
@@ -148,6 +152,23 @@ describe('CardShell', () => {
 
     expect(screen.getByTestId('rendered')).toHaveTextContent('fast')
     expect(screen.queryByTestId('skeleton')).toBeNull()
+  })
+
+  it('renders window.openai.toolOutput set after mount, when the host announces it', () => {
+    globalThis.openai = {}
+    renderShell(true)
+    expect(screen.queryByTestId('rendered')).toBeNull()
+
+    globalThis.openai = { toolOutput: { name: 'late' } }
+    act(() => {
+      globalThis.dispatchEvent(new Event('openai:set_globals'))
+    })
+
+    expect(screen.getByTestId('rendered')).toHaveTextContent('late')
+    act(() => {
+      vi.advanceTimersByTime(12_000)
+    })
+    expect(screen.queryByText(/Card diagnostic/)).toBeNull()
   })
 
   it('hands a failed call to the card as context.error, with no data', () => {

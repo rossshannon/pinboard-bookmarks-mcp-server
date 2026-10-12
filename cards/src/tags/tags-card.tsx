@@ -62,6 +62,8 @@ export const TagsCard = ({ context, data }: TagsCardProperties): ReactNode => {
   const limit = filtering || expanded ? MAX_TAGS : INITIAL_TAGS
   const shown = matching.slice(0, limit)
   const most = tags[0]?.count ?? 0
+  // Past the cap, "Show all" would be a promise the list can't keep.
+  const capped = tags.length > MAX_TAGS
 
   return (
     <Card label="Pinboard tags">
@@ -106,7 +108,9 @@ export const TagsCard = ({ context, data }: TagsCardProperties): ReactNode => {
                     {filtering
                       ? `First ${formatCount(shown.length)} of ${countOf(matching.length, 'match', 'matches')}`
                       : expanded
-                        ? `${formatCount(shown.length)} of ${countOf(tags.length, 'tag')}`
+                        ? capped
+                          ? `Top ${formatCount(shown.length)} of ${countOf(tags.length, 'tag')}: filter to find the rest`
+                          : `${formatCount(shown.length)} of ${countOf(tags.length, 'tag')}`
                         : `Top ${formatCount(shown.length)} of ${countOf(tags.length, 'tag')}`}
                   </span>
                   {!filtering && (
@@ -118,7 +122,7 @@ export const TagsCard = ({ context, data }: TagsCardProperties): ReactNode => {
                       }}
                       type="button"
                     >
-                      {expanded ? 'Show fewer' : 'Show all'}
+                      {expanded ? 'Show fewer' : capped ? `Show top ${formatCount(MAX_TAGS)}` : 'Show all'}
                     </button>
                   )}
                 </div>

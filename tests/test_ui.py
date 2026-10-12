@@ -129,6 +129,32 @@ class TestCardResources:
             assert "@import" not in html
 
 
+class TestMissingBuild:
+    def test_a_card_that_is_not_installed_drops_out_without_failing(self, caplog):
+        missing = ui.Card(name="not-built", title="Missing", description="Never built.")
+
+        with caplog.at_level("WARNING", logger="pinboard_mcp_server.ui"):
+            assert ui.tool_meta(missing) is None
+        assert "not-built" in caplog.text
+
+        registered: list[str] = []
+
+        class RecordingMcp:
+            def resource(self, uri: str, **_: Any) -> Any:
+                registered.append(uri)
+                return lambda fn: fn
+
+        original = ui.CARDS
+        try:
+            ui.CARDS = (missing, ui.TAGS_CARD)
+            ui.register_card_resources(RecordingMcp())
+        finally:
+            ui.CARDS = original
+        assert registered and all(
+            uri.startswith("ui://pinboard/tags@") for uri in registered
+        )
+
+
 class TestOffSwitch:
     @pytest.mark.parametrize("value", ["false", "FALSE", "0", "no", "off", " false "])
     def test_falsey_values_switch_the_cards_off(self, value):

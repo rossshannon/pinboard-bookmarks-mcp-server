@@ -16,10 +16,15 @@ export const pastDays = (days: number): string => {
 }
 
 /**
- * A `YYYY-MM-DD` the reader typed is a calendar date, not an instant, so it is
- * printed in UTC: in any other zone midnight UTC can fall on the day before.
+ * A `from_date`/`to_date` is a calendar date, not an instant: only its
+ * `YYYY-MM-DD` is read, and printed in UTC. The tool also accepts a date-time
+ * (`2024-01-01T05:00`), which a browser would parse in the reader's zone and
+ * could move to the day before.
  */
-const calendarDate = (value: string): string => shortDate(value, 'UTC') ?? value
+const calendarDate = (value: string): string => {
+  const day = /^\d{4}-\d{2}-\d{2}/.exec(value)?.[0]
+  return (day === undefined ? undefined : shortDate(`${day}T00:00:00Z`, 'UTC')) ?? value
+}
 
 export interface SubjectWords {
   readonly eyebrow: string

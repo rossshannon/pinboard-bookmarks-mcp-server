@@ -28,11 +28,14 @@ to the running build rather than failing.
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
 from dataclasses import dataclass
 from functools import cache
 from importlib import resources
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 #: Environment variable that switches the cards off when set to ``false``.
 APP_UI_ENV_VAR = "PINBOARD_MCP_APPS_UI"
@@ -92,6 +95,22 @@ def card_html(card: Card) -> str:
     )
 
 
+@cache
+def card_available(card: Card) -> bool:
+    """Whether the card's built document is installed. A missing one switches off that card only, never the server."""
+    try:
+        card_html(card)
+    except OSError:
+        logger.warning(
+            "MCP Apps card %r is not installed (ui/generated/%s.html); its tools will return plain results",
+            card.name,
+            card.name,
+        )
+        return False
+    return True
+
+
+@cache
 def card_hash(card: Card) -> str:
     """A fingerprint of the built bytes: the first 16 hex digits of their SHA-256."""
     return hashlib.sha256(card_html(card).encode("utf-8")).hexdigest()[:16]
@@ -111,7 +130,7 @@ def tool_meta(
     card: Card, environ: dict[str, str] | None = None
 ) -> dict[str, Any] | None:
     """The ``_meta`` a tool rendered by ``card`` carries, or ``None`` when the cards are off."""
-    if not ui_enabled(environ):
+    if not ui_enabled(environ) or not card_available(card):
         return None
     return {"ui": {"resourceUri": card_uri(card)}}
 
@@ -127,7 +146,8 @@ CARD_RESOURCE_META: dict[str, Any] = {"ui": {"prefersBorder": True}}
 def register_card_resources(mcp: Any) -> None:
     """Register every card's ``ui://`` resource on ``mcp``: the concrete URI, listed, and the any-fingerprint template."""
     for card in CARDS:
-        _register_card(mcp, card)
+        if card_available(card):
+            _register_card(mcp, card)
 
 
 def _register_card(mcp: Any, card: Card) -> None:

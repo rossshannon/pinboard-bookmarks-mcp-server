@@ -268,13 +268,24 @@ export const CardShell = ({ appName, children, skeleton, title }: CardShellPrope
 
   // The ChatGPT fast path, before the browser paints, so that host never
   // shows a connecting flash.
+  // That host can also mount the card while the tool is still running and set
+  // `toolOutput` later, announcing it with `openai:set_globals`.
   useLayoutEffect(() => {
-    const toolOutput = globalThis.openai?.toolOutput
-    if (toolOutput) {
-      hasRenderedReference.current = true
-      recordData(toolOutput)
+    const readToolOutput = (): void => {
+      if (hasRenderedReference.current) return
+      const toolOutput = globalThis.openai?.toolOutput
+      if (toolOutput) {
+        hasRenderedReference.current = true
+        breadcrumbs.record('render:openai-tool-output')
+        recordData(toolOutput)
+      }
     }
-  }, [recordData])
+    readToolOutput()
+    globalThis.addEventListener('openai:set_globals', readToolOutput)
+    return () => {
+      globalThis.removeEventListener('openai:set_globals', readToolOutput)
+    }
+  }, [breadcrumbs, recordData])
 
   const [statePhase, setStatePhase] = useState<StatePhase>('connecting')
 
@@ -345,7 +356,7 @@ export const CardShell = ({ appName, children, skeleton, title }: CardShellPrope
   }, [data, isConnected, resultError, sizeReporter, statePhase])
 
   if (data !== undefined || resultError !== undefined) {
-    const content = children(data ?? NO_DATA, { app: appReference.current, breadcrumbs, error: resultError, remeasure })
+    const content = children(data ?? NO_DATA, { app: isConnected ? appReference.current : null, breadcrumbs, error: resultError, remeasure })
 
     const fadingIn = skeleton !== undefined && generation === 1 && !crossfadeDone && !prefersReducedMotion()
     if (fadingIn) {

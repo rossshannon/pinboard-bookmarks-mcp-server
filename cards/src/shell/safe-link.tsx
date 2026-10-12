@@ -34,6 +34,8 @@ export interface SafeLinkProperties {
   readonly url: string
 }
 
+let rawRequestId = 0
+
 /** An `http(s)://`-only link that opens through the host; renders nothing for any other scheme. */
 export const SafeLink = ({ app, breadcrumbs, children, className, title, url }: SafeLinkProperties): ReactNode => {
   if (!isWebUrl(url)) return null
@@ -44,8 +46,11 @@ export const SafeLink = ({ app, breadcrumbs, children, className, title, url }: 
     event.preventDefault()
     if (!app) {
       breadcrumbs.record('openLink:raw-fallback', url)
-      // No origin is knowable from inside the sandboxed iframe.
-      globalThis.parent.postMessage({ jsonrpc: '2.0', method: 'ui/open-link', params: { url } }, '*')
+      // No origin is knowable from inside the sandboxed iframe. `ui/open-link`
+      // is a request, so it carries an id: without one a host reads it as a
+      // notification it has no handler for, and drops it.
+      rawRequestId += 1
+      globalThis.parent.postMessage({ id: `pinboard-card-open-link-${String(rawRequestId)}`, jsonrpc: '2.0', method: 'ui/open-link', params: { url } }, '*')
       return
     }
     breadcrumbs.record('openLink:requested', url)

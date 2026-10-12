@@ -1321,7 +1321,7 @@ mcp = [
 requires-dist = [
     { name = "build", marker = "extra == 'dev'", specifier = ">=1.0.0" },
     { name = "cachetools", specifier = ">=5.3.0" },
-    { name = "fastmcp", specifier = ">=3.0.0" },
+    { name = "fastmcp", specifier = ">=3.0.0,<5" },
     { name = "mcp", marker = "extra == 'mcp'", specifier = ">=1.0.0" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.6.0" },
     { name = "pinboard", specifier = ">=2.0.0" },
