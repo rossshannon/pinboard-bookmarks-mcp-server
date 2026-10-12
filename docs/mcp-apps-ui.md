@@ -5,7 +5,7 @@ In a host that supports [MCP Apps](https://modelcontextprotocol.io/docs/extensio
 | Card | Tools | Shows |
 |---|---|---|
 | `bookmarks` | `search_bookmarks`, `search_bookmarks_extended`, `list_recent_bookmarks`, `list_bookmarks_by_tags` | Title (linked), site, date saved, notes, tags. Tags you searched for are outlined, and private `.tags` are in italics. The first 8 rows show, with a "Show all" button for the rest. |
-| `tags` | `list_tags` | Tags by count as a bar chart. The top 20 show, with a filter box and "Show all" (up to 300). |
+| `tags` | `list_tags` | Tags by count as a bar chart. The top 20 show, with a filter box and "Show all". Lists are capped at 300 rows, so past 300 tags the button says "Show top 300" and the filter finds the rest. |
 
 The model still gets the same structured result as before. The card is only for the reader. Hosts without MCP Apps support ignore the card entirely.
 
@@ -39,9 +39,9 @@ The design is a port of the &Open MCP server's card layer. The shell and sizing 
   - If nothing has arrived after 1.5s, the card shows "Waiting for…".
   - If nothing has arrived after 12s, it shows a "Card diagnostic" with breadcrumbs that help explain why.
   - Once rendered, the card never goes back to waiting.
-- **Sizing.** The card reports its height to the host. It reports on a ladder of delays after each render, follows changes with a `ResizeObserver`, and ramps smoothly when it grows. When the bridge isn't connected yet, it posts a raw `ui/notifications/size-changed` instead. Cards call `remeasure()` after they expand ("Show all").
+- **Sizing.** The card reports its height to the host. It measures on a ladder of delays after each render and ramps smoothly when it grows. There is deliberately no `ResizeObserver` (`autoResize: false`), so a card whose height changes without a new result must call `remeasure()`, as "Show all" does. When the bridge isn't connected yet, the card posts a raw `ui/notifications/size-changed` instead, so a host can size it.
 - **Theme.** The card adopts the host's theme, its CSS variables (`--color-background-primary` and so on) and its fonts through ext-apps, and follows later changes to them. `card.css` defines `--pb-*` tokens that use the host's variable when there is one. Otherwise they fall back to OKLCH `light-dark()` values, so a host that sends only `theme`, or nothing at all, still looks right.
-- **Links.** `SafeLink` is the only place a card renders an `href`, and only for `http(s)`. A plain click goes through `app.openLink`, because the sandbox blocks navigation. A bookmark with any other scheme shows its title as text.
+- **Links.** `SafeLink` is the only place a card renders an `href`, and only for `http(s)`. The sandbox blocks navigation, so a plain click goes to the shell's link opener (`link-opener.ts`). Once the bridge is connected it sends `ui/open-link`. Before that it uses ChatGPT's `window.openai.openExternal` when that exists, and otherwise holds the click until the bridge connects. A bookmark with any other scheme shows its title as text.
 - **Errors.** A failed tool call renders an error block. A rejected token gets its own message that points at `PINBOARD_TOKEN`.
 
 Cards read `structuredContent` defensively, through the small readers in `guards.ts`. A missing or mistyped field drops out instead of throwing.

@@ -22,8 +22,9 @@ export const pastDays = (days: number): string => {
  * could move to the day before.
  */
 const calendarDate = (value: string): string => {
-  const day = /^\d{4}-\d{2}-\d{2}/.exec(value)?.[0]
-  return (day === undefined ? undefined : shortDate(`${day}T00:00:00Z`, 'UTC')) ?? value
+  // `fromisoformat` also takes the basic form, `20240101`.
+  const match = /^(\d{4})-?(\d{2})-?(\d{2})/.exec(value)
+  return (match === null ? undefined : shortDate(`${match[1] ?? ''}-${match[2] ?? ''}-${match[3] ?? ''}T00:00:00Z`, 'UTC')) ?? value
 }
 
 export interface SubjectWords {

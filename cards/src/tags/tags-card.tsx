@@ -7,7 +7,7 @@
 
 import type { ReactNode } from 'react'
 
-import { useEffect, useId, useRef, useState } from 'react'
+import { useEffect, useId, useMemo, useRef, useState } from 'react'
 
 import type { CardRenderContext } from '../shell/card-shell.tsx'
 
@@ -47,6 +47,9 @@ export const TagsCard = ({ context, data }: TagsCardProperties): ReactNode => {
     remeasure()
   }, [expanded, filter, remeasure])
 
+  // Not per keystroke: reading sorts every tag, and an account can have thousands.
+  const tags = useMemo(() => readTags(data), [data])
+
   if (context.error !== undefined) {
     return (
       <Card label="Pinboard tags">
@@ -56,7 +59,6 @@ export const TagsCard = ({ context, data }: TagsCardProperties): ReactNode => {
     )
   }
 
-  const tags = readTags(data)
   const matching = filterTags(tags, filter)
   const filtering = filter.trim() !== ''
   const limit = filtering || expanded ? MAX_TAGS : INITIAL_TAGS

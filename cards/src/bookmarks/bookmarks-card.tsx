@@ -45,7 +45,7 @@ const Bookmark = ({ context, matched, row }: RowProperties): ReactNode => {
         {/* SafeLink draws nothing for a non-web URL; the title must still show. */}
         {row.url === undefined || !isWebUrl(row.url)
           ? row.title
-          : <SafeLink app={context.app} breadcrumbs={context.breadcrumbs} title={row.url} url={row.url}>{row.title}</SafeLink>}
+          : <SafeLink breadcrumbs={context.breadcrumbs} links={context.links} title={row.url} url={row.url}>{row.title}</SafeLink>}
       </p>
       {(row.host !== undefined || saved !== undefined) && (
         <p className="bookmark__meta">

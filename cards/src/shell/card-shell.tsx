@@ -36,11 +36,13 @@ import { useApp } from '@modelcontextprotocol/ext-apps/react'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 
 import type { BreadcrumbLog } from './breadcrumbs.ts'
+import type { LinkOpener } from './link-opener.ts'
 import type { CardResultError, CardToolResultLike } from './use-card-result.ts'
 
 import './card.css'
 import { createBreadcrumbLog } from './breadcrumbs.ts'
 import { applyHostLook } from './host-theme.ts'
+import { createLinkOpener } from './link-opener.ts'
 import { Card } from './primitives.tsx'
 import { createSizeReporter, measureDocument, prefersReducedMotion } from './sizing.ts'
 import { useCardResult } from './use-card-result.ts'
@@ -48,7 +50,10 @@ import { useCardResult } from './use-card-result.ts'
 // ChatGPT exposes the tool output synchronously on `window.openai` instead of
 // (or ahead of) the MCP Apps postMessage handshake.
 declare global {
-  var openai: { readonly toolOutput?: Record<string, unknown> } | undefined
+  var openai: {
+    readonly openExternal?: (params: { href: string }) => void
+    readonly toolOutput?: Record<string, unknown>
+  } | undefined
 }
 
 /** Milliseconds after boot before an unfinished handshake paints a state card. */
@@ -137,7 +142,8 @@ const describeError = (error: Error): string => error.message
 
 /** What a card needs beyond its data. */
 export interface CardRenderContext {
-  readonly app: App | null
+  /** Opens a link through the host; SafeLink's only route out of the sandbox. */
+  readonly links: LinkOpener
   readonly breadcrumbs: BreadcrumbLog
   /** Set when the tool returned `isError`; `data` is empty whenever it is. */
   readonly error: CardResultError | undefined
@@ -239,6 +245,11 @@ export const CardShell = ({ appName, children, skeleton, title }: CardShellPrope
     },
   }))
 
+  const [links] = useState(() => createLinkOpener(
+    () => (isConnectedReference.current ? appReference.current : null),
+    breadcrumbs,
+  ))
+
   const remeasure = useCallback(() => {
     sizeReporter.onRender()
   }, [sizeReporter])
@@ -258,7 +269,8 @@ export const CardShell = ({ appName, children, skeleton, title }: CardShellPrope
     if (!isConnected) return
     breadcrumbs.record('connect:resolved', applyHostLook(app))
     sizeReporter.flushOnConnect()
-  }, [app, breadcrumbs, isConnected, sizeReporter])
+    links.flush()
+  }, [app, breadcrumbs, isConnected, links, sizeReporter])
 
   useEffect(() => {
     if (!error) return
@@ -356,7 +368,7 @@ export const CardShell = ({ appName, children, skeleton, title }: CardShellPrope
   }, [data, isConnected, resultError, sizeReporter, statePhase])
 
   if (data !== undefined || resultError !== undefined) {
-    const content = children(data ?? NO_DATA, { app: isConnected ? appReference.current : null, breadcrumbs, error: resultError, remeasure })
+    const content = children(data ?? NO_DATA, { breadcrumbs, error: resultError, links, remeasure })
 
     const fadingIn = skeleton !== undefined && generation === 1 && !crossfadeDone && !prefersReducedMotion()
     if (fadingIn) {

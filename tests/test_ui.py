@@ -130,8 +130,12 @@ class TestCardResources:
 
 
 class TestMissingBuild:
-    def test_a_card_that_is_not_installed_drops_out_without_failing(self, caplog):
+    def test_a_card_that_is_not_installed_drops_out_without_failing(
+        self, caplog, monkeypatch
+    ):
+        monkeypatch.delenv(ui.APP_UI_ENV_VAR, raising=False)
         missing = ui.Card(name="not-built", title="Missing", description="Never built.")
+        ui.card_available.cache_clear()
 
         with caplog.at_level("WARNING", logger="pinboard_mcp_server.ui"):
             assert ui.tool_meta(missing) is None
@@ -144,15 +148,23 @@ class TestMissingBuild:
                 registered.append(uri)
                 return lambda fn: fn
 
-        original = ui.CARDS
-        try:
-            ui.CARDS = (missing, ui.TAGS_CARD)
-            ui.register_card_resources(RecordingMcp())
-        finally:
-            ui.CARDS = original
+        monkeypatch.setattr(ui, "CARDS", (missing, ui.TAGS_CARD))
+        ui.register_card_resources(RecordingMcp())
         assert registered and all(
             uri.startswith("ui://pinboard/tags@") for uri in registered
         )
+
+    def test_a_card_that_cannot_be_decoded_drops_out_too(self, monkeypatch):
+        def undecodable(card: ui.Card) -> str:
+            raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
+
+        monkeypatch.delenv(ui.APP_UI_ENV_VAR, raising=False)
+        monkeypatch.setattr(ui, "card_html", undecodable)
+        ui.card_available.cache_clear()
+        try:
+            assert ui.tool_meta(ui.TAGS_CARD) is None
+        finally:
+            ui.card_available.cache_clear()
 
 
 class TestOffSwitch:

@@ -129,7 +129,7 @@ const easeOut = (t: number): number => 1 - (1 - t) ** 3
 
 /**
  * Whether the viewer has asked the operating system for less motion. The
- * card's own animations honour it through Tailwind's `motion-reduce:` variant,
+ * card's own animations honour it through card.css's `prefers-reduced-motion` block,
  * but a ramp is timer-driven size reports, not CSS — the largest motion on
  * screen, the frame itself, and the one thing no class can stop. Read on every
  * change of height rather than once, so a preference toggled while the card is

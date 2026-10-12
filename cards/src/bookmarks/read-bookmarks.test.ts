@@ -54,6 +54,7 @@ describe('describeSubject', () => {
     expect(describeSubject({ fromDate: '2026-01-01', kind: 'tags', tags: ['a'], toDate: undefined }).detail).toBe('Saved since 1 Jan 2026')
     // A date-time keeps its own calendar day, wherever the reader is.
     expect(describeSubject({ fromDate: '2026-01-01T05:00', kind: 'tags', tags: ['a'], toDate: undefined }).detail).toBe('Saved since 1 Jan 2026')
+    expect(describeSubject({ fromDate: '20260101', kind: 'tags', tags: ['a'], toDate: undefined }).detail).toBe('Saved since 1 Jan 2026')
     expect(describeSubject({ fromDate: '2026-01-01T23:30:00-05:00', kind: 'tags', tags: ['a'], toDate: undefined }).detail).toBe('Saved since 1 Jan 2026')
     expect(describeSubject({ fromDate: undefined, kind: 'tags', tags: ['a'], toDate: '2026-02-01' }).detail).toBe('Saved until 1 Feb 2026')
     expect(describeSubject({ fromDate: undefined, kind: 'tags', tags: ['a'], toDate: undefined }).detail).toBeUndefined()

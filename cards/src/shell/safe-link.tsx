@@ -7,26 +7,19 @@
  * affordances — middle-click, cmd/ctrl-click, "copy link address" — because
  * only the plain primary click is intercepted.
  *
- * That click always goes through `app.openLink`: the host sandbox blocks top
- * navigation. Before the bridge connects (or on a `window.openai` host that
- * never answers the handshake) there is no `app`, so the standard method is
- * posted raw instead, mirroring the sizing fallback in `sizing.ts`.
+ * That click goes to the shell's link opener (`link-opener.ts`): the host
+ * sandbox blocks top navigation, so the host has to open it.
  */
 
-import type { App } from '@modelcontextprotocol/ext-apps'
 import type { MouseEvent, ReactNode } from 'react'
 
 import type { BreadcrumbLog } from './breadcrumbs.ts'
+import type { LinkOpener } from './link-opener.ts'
 
 import { isWebUrl } from './safe-url.ts'
 
-/** The one `App` capability `SafeLink` needs, narrowed so a test double need not shape a whole `App`. */
-interface LinkOpener {
-  readonly openLink: App['openLink']
-}
-
 export interface SafeLinkProperties {
-  readonly app: LinkOpener | null
+  readonly links: LinkOpener
   readonly breadcrumbs: BreadcrumbLog
   readonly children: ReactNode
   readonly className?: string
@@ -34,27 +27,16 @@ export interface SafeLinkProperties {
   readonly url: string
 }
 
-let rawRequestId = 0
-
 /** An `http(s)://`-only link that opens through the host; renders nothing for any other scheme. */
-export const SafeLink = ({ app, breadcrumbs, children, className, title, url }: SafeLinkProperties): ReactNode => {
+export const SafeLink = ({ breadcrumbs, children, className, links, title, url }: SafeLinkProperties): ReactNode => {
   if (!isWebUrl(url)) return null
 
   const handleClick = (event: MouseEvent<HTMLAnchorElement>): void => {
     // Modified primary clicks keep their native new-tab/window behaviour.
     if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
     event.preventDefault()
-    if (!app) {
-      breadcrumbs.record('openLink:raw-fallback', url)
-      // No origin is knowable from inside the sandboxed iframe. `ui/open-link`
-      // is a request, so it carries an id: without one a host reads it as a
-      // notification it has no handler for, and drops it.
-      rawRequestId += 1
-      globalThis.parent.postMessage({ id: `pinboard-card-open-link-${String(rawRequestId)}`, jsonrpc: '2.0', method: 'ui/open-link', params: { url } }, '*')
-      return
-    }
     breadcrumbs.record('openLink:requested', url)
-    app.openLink({ url }).catch((error: unknown) => {
+    links.openLink({ url }).catch((error: unknown) => {
       breadcrumbs.record('openLink:error', error instanceof Error ? error.message : String(error))
     })
   }

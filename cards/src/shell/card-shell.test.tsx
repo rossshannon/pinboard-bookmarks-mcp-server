@@ -58,7 +58,7 @@ const { CardShell, chooseFadeIn } = await import('./card-shell.tsx')
 const BODY_HEIGHT = 200
 
 const renderChild = vi.fn<CardShellProperties['children']>((data, context) => (
-  <p data-testid="rendered">{`${String(data['name'])}::${context.app ? 'app' : 'no-app'}::${context.error?.text ?? 'ok'}`}</p>
+  <p data-testid="rendered">{`${String(data['name'])}::${context.error?.text ?? 'ok'}`}</p>
 ))
 
 const renderShell = (skeleton?: boolean): ReturnType<typeof render> => render(
@@ -131,18 +131,45 @@ describe('CardShell', () => {
     connect()
     deliver({ structuredContent: { name: 'Pinboard' } })
 
-    expect(screen.getByTestId('rendered')).toHaveTextContent('Pinboard::app::ok')
+    expect(screen.getByTestId('rendered')).toHaveTextContent('Pinboard::ok')
   })
 
-  it('renders a result delivered before the handshake resolves, with no app for links until it does', () => {
+  it('renders a result delivered before the handshake resolves', () => {
     renderShell()
     deliver({ structuredContent: { name: 'early' } })
 
-    // An App that hasn't connected would take a click and never answer it;
-    // with none, SafeLink posts the request itself.
-    expect(screen.getByTestId('rendered')).toHaveTextContent('early::no-app::ok')
+    expect(screen.getByTestId('rendered')).toHaveTextContent('early::ok')
+  })
+
+  it('holds a link clicked before the handshake and sends it through the bridge once connected', async () => {
+    renderShell()
+    deliver({ structuredContent: { name: 'early' } })
+
+    await act(async () => {
+      await lastContext().links.openLink({ url: 'https://pinboard.in/' })
+    })
+    expect(fakeApp.openLink).not.toHaveBeenCalled()
+
     connect()
-    expect(screen.getByTestId('rendered')).toHaveTextContent('early::app::ok')
+    expect(fakeApp.openLink).toHaveBeenCalledExactlyOnceWith({ url: 'https://pinboard.in/' })
+
+    await act(async () => {
+      await lastContext().links.openLink({ url: 'https://example.com/' })
+    })
+    expect(fakeApp.openLink).toHaveBeenLastCalledWith({ url: 'https://example.com/' })
+  })
+
+  it('opens links with window.openai.openExternal on a host that never connects', async () => {
+    const openExternal = vi.fn()
+    globalThis.openai = { openExternal, toolOutput: { name: 'fast' } }
+    renderShell()
+
+    await act(async () => {
+      await lastContext().links.openLink({ url: 'https://pinboard.in/' })
+    })
+
+    expect(openExternal).toHaveBeenCalledExactlyOnceWith({ href: 'https://pinboard.in/' })
+    expect(fakeApp.openLink).not.toHaveBeenCalled()
   })
 
   it('renders window.openai.toolOutput at once, on the ChatGPT fast path', () => {
@@ -176,7 +203,7 @@ describe('CardShell', () => {
     connect()
     deliver({ content: [{ text: 'Pinboard is down', type: 'text' }], isError: true })
 
-    expect(screen.getByTestId('rendered')).toHaveTextContent('undefined::app::Pinboard is down')
+    expect(screen.getByTestId('rendered')).toHaveTextContent('undefined::Pinboard is down')
   })
 
   it('says it is waiting after 1.5s when the handshake resolved but no result came', () => {

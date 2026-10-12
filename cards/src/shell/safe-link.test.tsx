@@ -11,7 +11,7 @@ describe('SafeLink', () => {
   it.each(HOSTILE_URLS)('renders no anchor for a hostile scheme: %s', (url) => {
     const breadcrumbs = createBreadcrumbLog()
 
-    const { container } = render(<SafeLink app={null} breadcrumbs={breadcrumbs} url={url}>Bookmark title</SafeLink>)
+    const { container } = render(<SafeLink links={{ openLink: vi.fn() }} breadcrumbs={breadcrumbs} url={url}>Bookmark title</SafeLink>)
 
     expect(container.querySelector('a')).toBeNull()
   })
@@ -19,7 +19,7 @@ describe('SafeLink', () => {
   it('renders a real anchor for an https:// URL', () => {
     const breadcrumbs = createBreadcrumbLog()
 
-    render(<SafeLink app={null} breadcrumbs={breadcrumbs} url="https://pinboard.in/u:ross/t:mcp/">Bookmark title</SafeLink>)
+    render(<SafeLink links={{ openLink: vi.fn() }} breadcrumbs={breadcrumbs} url="https://pinboard.in/u:ross/t:mcp/">Bookmark title</SafeLink>)
 
     const anchor = screen.getByRole('link', { name: 'Bookmark title' })
     expect(anchor).toHaveAttribute('href', 'https://pinboard.in/u:ross/t:mcp/')
@@ -34,7 +34,7 @@ describe('SafeLink', () => {
   it('renders a real anchor for an http:// URL too', () => {
     const breadcrumbs = createBreadcrumbLog()
 
-    render(<SafeLink app={null} breadcrumbs={breadcrumbs} url="http://www.paulgraham.com/hwh.html">Bookmark title</SafeLink>)
+    render(<SafeLink links={{ openLink: vi.fn() }} breadcrumbs={breadcrumbs} url="http://www.paulgraham.com/hwh.html">Bookmark title</SafeLink>)
 
     expect(screen.getByRole('link', { name: 'Bookmark title' })).toHaveAttribute('href', 'http://www.paulgraham.com/hwh.html')
   })
@@ -42,33 +42,17 @@ describe('SafeLink', () => {
   it('applies the given className to the rendered anchor', () => {
     const breadcrumbs = createBreadcrumbLog()
 
-    render(<SafeLink app={null} breadcrumbs={breadcrumbs} className="btn" url="https://pinboard.in/u:ross/t:mcp/">Bookmark title</SafeLink>)
+    render(<SafeLink links={{ openLink: vi.fn() }} breadcrumbs={breadcrumbs} className="btn" url="https://pinboard.in/u:ross/t:mcp/">Bookmark title</SafeLink>)
 
     expect(screen.getByRole('link', { name: 'Bookmark title' })).toHaveClass('btn')
   })
 
-  it('raw-posts ui/open-link when no bridge is connected, so the link works on fast-path hosts', () => {
-    const breadcrumbs = createBreadcrumbLog()
-    const postMessage = vi.spyOn(globalThis.parent, 'postMessage').mockImplementation((): void => { /* capture only */ })
-
-    render(<SafeLink app={null} breadcrumbs={breadcrumbs} url="https://pinboard.in/u:ross/t:mcp/">Bookmark title</SafeLink>)
-    const anchor = screen.getByRole('link', { name: 'Bookmark title' })
-    const event = fireEvent.click(anchor)
-
-    expect(event).toBe(false) // fireEvent.click returns false when preventDefault was called
-    expect(breadcrumbs.entries()).toEqual([{ detail: 'https://pinboard.in/u:ross/t:mcp/', label: 'openLink:raw-fallback' }])
-    expect(postMessage).toHaveBeenCalledExactlyOnceWith(
-      { id: expect.stringMatching(/^pinboard-card-open-link-\d+$/) as unknown, jsonrpc: '2.0', method: 'ui/open-link', params: { url: 'https://pinboard.in/u:ross/t:mcp/' } },
-      '*',
-    )
-  })
-
-  it('opens the link through app.openLink once connected, recording a breadcrumb', () => {
+  it('hands a plain click to the link opener, recording a breadcrumb', () => {
     const breadcrumbs = createBreadcrumbLog()
     vi.spyOn(console, 'log').mockImplementation((): void => { /* no-op: forensics logging is not under test here */ })
     const openLink = vi.fn().mockResolvedValue({})
 
-    render(<SafeLink app={{ openLink }} breadcrumbs={breadcrumbs} url="https://pinboard.in/u:ross/t:mcp/">Bookmark title</SafeLink>)
+    render(<SafeLink links={{ openLink }} breadcrumbs={breadcrumbs} url="https://pinboard.in/u:ross/t:mcp/">Bookmark title</SafeLink>)
     fireEvent.click(screen.getByRole('link', { name: 'Bookmark title' }))
 
     expect(openLink).toHaveBeenCalledExactlyOnceWith({ url: 'https://pinboard.in/u:ross/t:mcp/' })
@@ -80,7 +64,7 @@ describe('SafeLink', () => {
     vi.spyOn(console, 'log').mockImplementation((): void => { /* no-op: forensics logging is not under test here */ })
     const openLink = vi.fn().mockResolvedValue({})
 
-    render(<SafeLink app={{ openLink }} breadcrumbs={breadcrumbs} url="https://pinboard.in/u:ross/t:mcp/">Bookmark title</SafeLink>)
+    render(<SafeLink links={{ openLink }} breadcrumbs={breadcrumbs} url="https://pinboard.in/u:ross/t:mcp/">Bookmark title</SafeLink>)
     const anchor = screen.getByRole('link', { name: 'Bookmark title' })
 
     // cmd-click, ctrl-click, shift-click, alt-click: default NOT prevented
@@ -97,7 +81,7 @@ describe('SafeLink', () => {
     vi.spyOn(console, 'log').mockImplementation((): void => { /* no-op: forensics logging is not under test here */ })
     const openLink = vi.fn().mockRejectedValue(new Error('host denied the request'))
 
-    render(<SafeLink app={{ openLink }} breadcrumbs={breadcrumbs} url="https://pinboard.in/u:ross/t:mcp/">Bookmark title</SafeLink>)
+    render(<SafeLink links={{ openLink }} breadcrumbs={breadcrumbs} url="https://pinboard.in/u:ross/t:mcp/">Bookmark title</SafeLink>)
     fireEvent.click(screen.getByRole('link', { name: 'Bookmark title' }))
     // Let the rejected promise's .catch() handler run.
     await vi.waitFor(() => {
@@ -115,7 +99,7 @@ describe('SafeLink', () => {
     vi.spyOn(console, 'log').mockImplementation((): void => { /* no-op: forensics logging is not under test here */ })
     const openLink = vi.fn().mockRejectedValue('denied')
 
-    render(<SafeLink app={{ openLink }} breadcrumbs={breadcrumbs} url="https://pinboard.in/u:ross/t:mcp/">Bookmark title</SafeLink>)
+    render(<SafeLink links={{ openLink }} breadcrumbs={breadcrumbs} url="https://pinboard.in/u:ross/t:mcp/">Bookmark title</SafeLink>)
     fireEvent.click(screen.getByRole('link', { name: 'Bookmark title' }))
     await vi.waitFor(() => {
       expect(breadcrumbs.entries()).toHaveLength(2)

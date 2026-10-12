@@ -100,7 +100,7 @@ def card_available(card: Card) -> bool:
     """Whether the card's built document is installed. A missing one switches off that card only, never the server."""
     try:
         card_html(card)
-    except OSError:
+    except (OSError, ValueError):  # missing, unreadable, or not UTF-8
         logger.warning(
             "MCP Apps card %r is not installed (ui/generated/%s.html); its tools will return plain results",
             card.name,
