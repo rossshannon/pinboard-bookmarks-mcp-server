@@ -69,6 +69,7 @@ def _assert_types_within(
     fixture: dict[str, Any], allowed: dict[str, set[str]], where: str
 ) -> None:
     for key, value in fixture.items():
+        assert key in allowed, f"{where}: {key} is not a key the tools send"
         kind = _json_type(value)
         if kind == "array" and any(t.startswith("array") for t in allowed[key]):
             continue
@@ -120,8 +121,15 @@ class TestCardResources:
             assert resource.meta is not None
             assert resource.meta["ui"] == ui.CARD_RESOURCE_META["ui"]
             assert resource.meta["ui"]["prefersBorder"] is True
+            # Spelled out, not read back from HOST_FONT_ORIGINS, so a typo
+            # there fails here. These are where Claude's styles.css.fonts
+            # point: its own asset host and Google Fonts' CSS and files.
             assert resource.meta["ui"]["csp"] == {
-                "resourceDomains": list(ui.HOST_FONT_ORIGINS)
+                "resourceDomains": [
+                    "https://assets.anthropic.com",
+                    "https://fonts.googleapis.com",
+                    "https://fonts.gstatic.com",
+                ]
             }
 
     async def test_reading_a_card_serves_its_built_document(self, mcp_client):

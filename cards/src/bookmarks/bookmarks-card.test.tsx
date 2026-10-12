@@ -1,5 +1,5 @@
-import { fireEvent, render, screen, within } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
+import { act, fireEvent, render, screen, within } from '@testing-library/react'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { fixtureData, fixtureError } from '../../fixtures/index.ts'
 import { stubContext } from '../../test-support/context.ts'
@@ -11,6 +11,12 @@ const renderScenario = (scenario: string, context = stubContext()): ReturnType<t
 const rows = (): HTMLElement[] => screen.queryAllByRole('listitem').filter(item => item.classList.contains('bookmark'))
 
 describe('BookmarksCard', () => {
+  // A failed layout test must not leave its mocks behind for the next.
+  afterEach(() => {
+    vi.restoreAllMocks()
+    Reflect.deleteProperty(document, 'fonts')
+  })
+
   it('heads a search with the query and the count', () => {
     renderScenario('search')
 
@@ -130,10 +136,10 @@ describe('BookmarksCard', () => {
 
   it('offers "Show more" on a note the clamp cuts short, and opens it', () => {
     // jsdom has no layout: say the clamped note is taller than its box.
-    const scroll = vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockImplementation(function (this: HTMLElement) {
+    vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockImplementation(function (this: HTMLElement) {
       return this.classList.contains('bookmark__notes') ? 120 : 0
     })
-    const client = vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockImplementation(function (this: HTMLElement) {
+    vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockImplementation(function (this: HTMLElement) {
       return this.classList.contains('bookmark__notes') ? 60 : 0
     })
     const context = stubContext()
@@ -147,8 +153,25 @@ describe('BookmarksCard', () => {
     expect(less).toHaveAttribute('aria-expanded', 'true')
     expect(document.getElementById(less.getAttribute('aria-controls') ?? '')).toHaveClass('bookmark__notes--open')
     expect(context.remeasure).toHaveBeenCalledOnce()
-    scroll.mockRestore()
-    client.mockRestore()
+  })
+
+  it('rechecks the clamp when a font loads late and reflows the note', () => {
+    const fonts = new EventTarget()
+    Object.defineProperty(document, 'fonts', { configurable: true, value: fonts })
+    let overflowing = false
+    vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockImplementation(function (this: HTMLElement) {
+      return this.classList.contains('bookmark__notes') && overflowing ? 120 : 60
+    })
+    vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockImplementation(() => 60)
+    renderScenario('long')
+    expect(screen.queryByRole('button', { name: 'Show more' })).toBeNull()
+
+    overflowing = true
+    act(() => {
+      fonts.dispatchEvent(new Event('loadingdone'))
+    })
+
+    expect(screen.getByRole('button', { name: 'Show more' })).toBeInTheDocument()
   })
 
   it('offers no "Show more" on a note that fits', () => {

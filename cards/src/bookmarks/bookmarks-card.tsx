@@ -54,9 +54,17 @@ const Notes = ({ notes, remeasure }: NotesProperties): ReactNode => {
       setClamped(element.scrollHeight > element.clientHeight + 1)
     }
     check()
-    globalThis.addEventListener('resize', check)
+    // Rechecked whenever the clamp might start or stop hiding text: the box
+    // resizes (a narrower frame), or a font arrives late and reflows it
+    // without changing the box's three-line height. Either may be missing
+    // outside a real browser.
+    const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(check) : undefined
+    observer?.observe(element)
+    const fonts = typeof document.fonts === 'object' ? document.fonts : undefined
+    fonts?.addEventListener('loadingdone', check)
     return () => {
-      globalThis.removeEventListener('resize', check)
+      observer?.disconnect()
+      fonts?.removeEventListener('loadingdone', check)
     }
   }, [notes, open])
 

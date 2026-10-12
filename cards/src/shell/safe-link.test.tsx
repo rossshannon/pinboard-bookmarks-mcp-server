@@ -86,6 +86,7 @@ describe('SafeLink', () => {
     expect(fireEvent.click(anchor, { altKey: true })).toBe(true)
     expect(fireEvent(anchor, new MouseEvent('auxclick', { bubbles: true, button: 2, cancelable: true }))).toBe(true)
     expect(openLink).not.toHaveBeenCalled()
+    expect(breadcrumbs.entries()).toEqual([])
   })
 
   it('records a breadcrumb if the host rejects the openLink request', async () => {
