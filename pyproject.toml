@@ -23,7 +23,7 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
 ]
 dependencies = [
-    "fastmcp>=2.0.0",
+    "fastmcp>=3.0.0",
     "pinboard>=2.0.0",
     "pydantic>=2.0.0",
     "python-dateutil>=2.8.0",
@@ -69,6 +69,10 @@ where = ["src"]
 
 [tool.setuptools.package-dir]
 "" = "src"
+
+# The built MCP Apps cards (see docs/mcp-apps-ui.md), served as ui:// resources.
+[tool.setuptools.package-data]
+pinboard_mcp_server = ["ui/generated/*.html"]
 
 [tool.ruff]
 target-version = "py310"

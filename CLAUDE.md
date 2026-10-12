@@ -42,6 +42,15 @@ Based on the PRD (docs/pinboard_mcp_server_prd.md), the system follows this desi
 - When introducing or upgrading dependencies, update the `pyproject.toml` file with the new version and run `poetry update` to update the lock file. Do a search online for appropriate version numbers rather than relying on your memory.
 - **Test Coverage Requirements**: The CI pipeline requires 75% test coverage to pass. Current coverage exceeds requirements with comprehensive testing of search methods, error handling, and edge cases.
 
+## MCP Apps result cards
+
+Tools link to `ui://pinboard/<card>@<hash>` cards (see docs/mcp-apps-ui.md). The card source is the Node project in `cards/`; the server only serves the committed builds in `src/pinboard_mcp_server/ui/generated/`.
+
+- After changing anything in `cards/src/`, run `npm run build` in `cards/` and commit the regenerated HTML: CI's `npm run check` byte-compares it against a fresh build
+- When a tool's return shape changes, update `cards/fixtures/*.json` too; `tests/test_ui.py` fails when they drift
+- New tools get `meta=ui.tool_meta(<card>)` on their `@mcp.tool` decorator
+- Check a visual change with `npm run capture` (screenshots in `cards/tmp/captures/`) and `npm run test:browser`
+
 ## Virtual Environment
 
 The project uses a Python virtual environment at `~/.venvs/pinboard-bookmarks-mcp-server/`. Always activate before running tests or development commands:

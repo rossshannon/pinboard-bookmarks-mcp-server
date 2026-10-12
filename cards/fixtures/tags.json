@@ -1,0 +1,244 @@
+{
+  "normal": {
+    "structuredContent": {
+      "result": [
+        {
+          "tag": "python",
+          "count": 119
+        },
+        {
+          "tag": "javascript",
+          "count": 58
+        },
+        {
+          "tag": "ruby",
+          "count": 23
+        },
+        {
+          "tag": "astronomy",
+          "count": 19
+        },
+        {
+          "tag": "diy",
+          "count": 18
+        },
+        {
+          "tag": "garden",
+          "count": 11
+        },
+        {
+          "tag": "music",
+          "count": 10
+        },
+        {
+          "tag": "film",
+          "count": 10
+        },
+        {
+          "tag": "gaming",
+          "count": 9
+        },
+        {
+          "tag": "macos",
+          "count": 8
+        },
+        {
+          "tag": "ai",
+          "count": 8
+        },
+        {
+          "tag": "mcp",
+          "count": 8
+        },
+        {
+          "tag": "essays",
+          "count": 8
+        },
+        {
+          "tag": "software",
+          "count": 8
+        },
+        {
+          "tag": "productivity",
+          "count": 7
+        },
+        {
+          "tag": "design",
+          "count": 6
+        },
+        {
+          "tag": "css",
+          "count": 6
+        },
+        {
+          "tag": "typography",
+          "count": 6
+        },
+        {
+          "tag": "kids",
+          "count": 6
+        },
+        {
+          "tag": "dublin",
+          "count": 6
+        },
+        {
+          "tag": "ireland",
+          "count": 6
+        },
+        {
+          "tag": "cooking",
+          "count": 6
+        },
+        {
+          "tag": "coffee",
+          "count": 5
+        },
+        {
+          "tag": "photography",
+          "count": 5
+        },
+        {
+          "tag": "finance",
+          "count": 5
+        },
+        {
+          "tag": "investing",
+          "count": 5
+        },
+        {
+          "tag": "startups",
+          "count": 5
+        },
+        {
+          "tag": "history",
+          "count": 5
+        },
+        {
+          "tag": "science",
+          "count": 4
+        },
+        {
+          "tag": "space",
+          "count": 4
+        },
+        {
+          "tag": "rust",
+          "count": 4
+        },
+        {
+          "tag": "typescript",
+          "count": 4
+        },
+        {
+          "tag": "nas",
+          "count": 4
+        },
+        {
+          "tag": "synology",
+          "count": 4
+        },
+        {
+          "tag": "shield",
+          "count": 4
+        },
+        {
+          "tag": "home",
+          "count": 4
+        },
+        {
+          "tag": "parenting",
+          "count": 4
+        },
+        {
+          "tag": "books",
+          "count": 4
+        },
+        {
+          "tag": "toread",
+          "count": 4
+        },
+        {
+          "tag": ".toread",
+          "count": 4
+        },
+        {
+          "tag": ".private-notes",
+          "count": 4
+        },
+        {
+          "tag": "maps",
+          "count": 4
+        }
+      ]
+    }
+  },
+  "few": {
+    "structuredContent": {
+      "result": [
+        {
+          "tag": "python",
+          "count": 12
+        },
+        {
+          "tag": "essays",
+          "count": 5
+        },
+        {
+          "tag": "astronomy",
+          "count": 3
+        }
+      ]
+    }
+  },
+  "empty": {
+    "structuredContent": {
+      "result": []
+    }
+  },
+  "hostile": {
+    "structuredContent": {
+      "result": [
+        {
+          "tag": "<img src=x onerror=alert(1)><script>alert('x')</script>",
+          "count": 3
+        },
+        {
+          "tag": "</ol><script>alert(1)</script>",
+          "count": 2
+        },
+        {
+          "tag": "ok",
+          "count": "7"
+        },
+        {
+          "count": 4
+        },
+        "junk"
+      ]
+    }
+  },
+  "long": {
+    "structuredContent": {
+      "result": [
+        {
+          "tag": "SupercalifragilisticexpialidociousSupercalifragilisticexpialidociousSupercalifragilisticexpialidociousSupercalifragilisticexpialidociousSupercalifragilisticexpialidociousSupercalifragilisticexpialidocious",
+          "count": 1204
+        },
+        {
+          "tag": "tag-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "count": 3
+        }
+      ]
+    }
+  },
+  "error": {
+    "isError": true,
+    "content": [
+      {
+        "type": "text",
+        "text": "Error calling tool 'list_tags': Pinboard API request failed: 429 Too Many Requests"
+      }
+    ]
+  }
+}

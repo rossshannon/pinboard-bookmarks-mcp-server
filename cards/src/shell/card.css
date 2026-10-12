@@ -1,0 +1,485 @@
+/*
+ * The cards' one stylesheet, inlined into every built document.
+ *
+ * Tokens first. Each reads the MCP Apps host variable of the same meaning
+ * (`--color-background-primary`, `--font-sans`, …), which `host-theme.ts`
+ * applies from the handshake, and falls back to the card's own value. So in a
+ * host that sends its style variables the card looks native, and in one that
+ * sends none it still has a complete palette. Every colour of our own is a
+ * `light-dark()` pair, resolved by `color-scheme`: the host's reported theme
+ * when it gives one (`applyDocumentTheme` sets it on the root), else the
+ * reader's OS, through the root's own `color-scheme: light dark`.
+ *
+ * No `[data-theme]` selectors and no `prefers-color-scheme` blocks: one
+ * mechanism, so the palette lives in exactly one place.
+ */
+
+:root {
+  color-scheme: light dark;
+
+  --pb-surface: var(--color-background-primary, light-dark(oklch(99.5% 0.002 90), oklch(21% 0.004 90)));
+  --pb-surface-raised: var(--color-background-secondary, light-dark(oklch(96.5% 0.004 90), oklch(26% 0.005 90)));
+  --pb-text: var(--color-text-primary, light-dark(oklch(22% 0.01 90), oklch(93% 0.006 90)));
+  --pb-text-muted: var(--color-text-secondary, light-dark(oklch(48% 0.012 90), oklch(72% 0.01 90)));
+  --pb-text-faint: var(--color-text-tertiary, light-dark(oklch(60% 0.01 90), oklch(60% 0.01 90)));
+  --pb-border: var(--color-border-tertiary, light-dark(oklch(22% 0.01 90 / 0.1), oklch(93% 0.006 90 / 0.12)));
+  --pb-danger: var(--color-text-danger, light-dark(oklch(50% 0.17 28), oklch(74% 0.13 28)));
+  --pb-focus: var(--color-ring-primary, light-dark(oklch(52% 0.2 262), oklch(72% 0.14 262)));
+
+  /* Pinboard's own: a title is a link before it is anything else, so it keeps
+     the site's blue rather than the host's body text colour. */
+  --pb-link: light-dark(oklch(45% 0.2 262), oklch(76% 0.12 262));
+  --pb-tag: light-dark(oklch(48% 0.07 160), oklch(76% 0.08 160));
+  --pb-tag-surface: light-dark(oklch(48% 0.07 160 / 0.08), oklch(76% 0.08 160 / 0.12));
+  --pb-bar: light-dark(oklch(45% 0.2 262 / 0.16), oklch(76% 0.12 262 / 0.22));
+  --pb-skeleton: light-dark(oklch(22% 0.01 90 / 0.1), oklch(93% 0.006 90 / 0.14));
+
+  --pb-font: var(--font-sans, system-ui, -apple-system, blinkmacsystemfont, "Segoe UI", roboto, sans-serif);
+  --pb-text-sm: var(--font-text-sm-size, 0.8125rem);
+  --pb-text-sm-lh: var(--font-text-sm-line-height, 1.25rem);
+  --pb-text-md: var(--font-text-md-size, 0.9375rem);
+  --pb-text-md-lh: var(--font-text-md-line-height, 1.375rem);
+  --pb-heading: var(--font-heading-sm-size, 1rem);
+  --pb-heading-lh: var(--font-heading-sm-line-height, 1.5rem);
+  --pb-weight-medium: var(--font-weight-medium, 500);
+  --pb-weight-semibold: var(--font-weight-semibold, 600);
+  --pb-radius: var(--border-radius-lg, 12px);
+  --pb-radius-sm: var(--border-radius-sm, 6px);
+
+  --pb-gap: 12px;
+  --pb-pad: 16px;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+/* The card fills the host's iframe, so the body takes the card's surface: a
+   sliver at the edges matches rather than flashing another colour. */
+body {
+  margin: 0;
+  background: var(--pb-surface);
+  color: var(--pb-text);
+  font-family: var(--pb-font);
+  font-size: var(--pb-text-md);
+  line-height: var(--pb-text-md-lh);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizelegibility;
+}
+
+p,
+h1,
+h2,
+h3,
+ol,
+ul {
+  margin: 0;
+  padding: 0;
+}
+
+ol,
+ul {
+  list-style: none;
+}
+
+/* Positioned so the crossfade overlay can sit against it. */
+#root {
+  position: relative;
+}
+
+.visually-hidden {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+:focus-visible {
+  outline: 2px solid var(--pb-focus);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
+/* ---- Card surface ------------------------------------------------------ */
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pb-gap);
+  padding: var(--pb-pad);
+  background: var(--pb-surface);
+  border-radius: var(--pb-radius);
+  min-inline-size: 0;
+}
+
+.card--fill {
+  min-block-size: 100vh;
+}
+
+.state-title {
+  font-size: var(--pb-heading);
+  line-height: var(--pb-heading-lh);
+  font-weight: var(--pb-weight-semibold);
+}
+
+.state-detail {
+  color: var(--pb-text-muted);
+  font-size: var(--pb-text-sm);
+  line-height: var(--pb-text-sm-lh);
+  overflow-wrap: anywhere;
+}
+
+/* ---- Head: eyebrow, title, count -------------------------------------- */
+
+.head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--pb-gap);
+  min-inline-size: 0;
+}
+
+.head__text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-inline-size: 0;
+}
+
+.eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--pb-text-muted);
+  font-size: var(--pb-text-sm);
+  line-height: var(--pb-text-sm-lh);
+}
+
+.eyebrow svg {
+  inline-size: 14px;
+  block-size: 14px;
+  flex: none;
+  color: var(--pb-link);
+}
+
+.head__title {
+  font-size: var(--pb-heading);
+  line-height: var(--pb-heading-lh);
+  font-weight: var(--pb-weight-semibold);
+  overflow-wrap: anywhere;
+}
+
+.head__detail {
+  color: var(--pb-text-muted);
+  font-size: var(--pb-text-sm);
+  line-height: var(--pb-text-sm-lh);
+  overflow-wrap: anywhere;
+}
+
+.count {
+  flex: none;
+  padding: 2px 10px;
+  border-radius: 999px;
+  background: var(--pb-surface-raised);
+  color: var(--pb-text-muted);
+  font-size: var(--pb-text-sm);
+  line-height: var(--pb-text-sm-lh);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* ---- Bookmark rows ----------------------------------------------------- */
+
+.bookmarks {
+  display: flex;
+  flex-direction: column;
+}
+
+.bookmark {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-block: 12px;
+  border-block-start: 1px solid var(--pb-border);
+  min-inline-size: 0;
+}
+
+.bookmark:first-child {
+  border-block-start: 0;
+  padding-block-start: 4px;
+}
+
+.bookmark__title {
+  font-weight: var(--pb-weight-medium);
+  overflow-wrap: anywhere;
+}
+
+.bookmark__title a {
+  color: var(--pb-link);
+  text-decoration: none;
+}
+
+@media (hover: hover) {
+  .bookmark__title a:hover {
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+}
+
+.bookmark__meta {
+  display: flex;
+  flex-wrap: wrap;
+  column-gap: 6px;
+  color: var(--pb-text-faint);
+  font-size: var(--pb-text-sm);
+  line-height: var(--pb-text-sm-lh);
+  min-inline-size: 0;
+}
+
+.bookmark__host {
+  overflow-wrap: anywhere;
+}
+
+.bookmark__meta > * + *::before {
+  content: "·";
+  margin-inline-end: 6px;
+}
+
+.bookmark__notes {
+  color: var(--pb-text-muted);
+  font-size: var(--pb-text-sm);
+  line-height: var(--pb-text-sm-lh);
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  overflow: hidden;
+}
+
+.tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+  margin-block-start: 2px;
+}
+
+.tag {
+  padding: 0 7px;
+  border-radius: var(--pb-radius-sm);
+  background: var(--pb-tag-surface);
+  color: var(--pb-tag);
+  font-size: var(--pb-text-sm);
+  line-height: var(--pb-text-sm-lh);
+  overflow-wrap: anywhere;
+}
+
+/* A tag the reader asked for: the one the list is filtered by, or the search
+   term itself. */
+.tag--matched {
+  font-weight: var(--pb-weight-semibold);
+  box-shadow: inset 0 0 0 1px currentcolor;
+}
+
+/* Pinboard's private tags start with a dot. */
+.tag--private {
+  font-style: italic;
+}
+
+/* ---- Footer and the one control --------------------------------------- */
+
+.foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--pb-gap);
+  color: var(--pb-text-faint);
+  font-size: var(--pb-text-sm);
+  line-height: var(--pb-text-sm-lh);
+}
+
+.button {
+  appearance: none;
+  padding: 4px 12px;
+  border: 1px solid var(--pb-border);
+  border-radius: 999px;
+  background: var(--pb-surface-raised);
+  color: var(--pb-text);
+  font: inherit;
+  font-size: var(--pb-text-sm);
+  line-height: var(--pb-text-sm-lh);
+  cursor: pointer;
+}
+
+@media (hover: hover) {
+  .button:hover {
+    border-color: currentcolor;
+  }
+}
+
+.empty {
+  color: var(--pb-text-muted);
+}
+
+/* ---- Tag list ---------------------------------------------------------- */
+
+.filter {
+  inline-size: 100%;
+  padding: 6px 10px;
+  border: 1px solid var(--pb-border);
+  border-radius: var(--pb-radius-sm);
+  background: var(--pb-surface-raised);
+  color: var(--pb-text);
+  font: inherit;
+  font-size: var(--pb-text-sm);
+}
+
+.tag-rows {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 2px;
+}
+
+.tag-row {
+  position: relative;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--pb-gap);
+  padding: 3px 8px;
+  border-radius: var(--pb-radius-sm);
+  font-size: var(--pb-text-sm);
+  line-height: var(--pb-text-sm-lh);
+  isolation: isolate;
+}
+
+/* The bar is the row's own background, drawn to the count's share of the
+   largest: a list you can read down and a chart at the same time. */
+.tag-row__bar {
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: 0;
+  z-index: -1;
+  border-radius: inherit;
+  background: var(--pb-bar);
+}
+
+.tag-row__name {
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+}
+
+.tag-row__count {
+  flex: none;
+  color: var(--pb-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- Error ------------------------------------------------------------- */
+
+.error__title {
+  color: var(--pb-danger);
+  font-weight: var(--pb-weight-semibold);
+}
+
+.error__detail {
+  color: var(--pb-text-muted);
+  font-size: var(--pb-text-sm);
+  line-height: var(--pb-text-sm-lh);
+  overflow-wrap: anywhere;
+}
+
+/* ---- Loading ----------------------------------------------------------- */
+
+.skeleton-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pb-gap);
+  animation: appear 240ms ease-out both;
+}
+
+/* Paint only, never geometry: a placeholder that moved would have the sizing
+   ladder reporting a different height on every tick. */
+.skeleton {
+  border-radius: var(--pb-radius-sm);
+  background: var(--pb-skeleton);
+  animation: skeleton-pulse 1.4s ease-in-out infinite;
+}
+
+.skeleton--line {
+  block-size: 1lh;
+}
+
+.skeleton--chip {
+  block-size: var(--pb-text-sm-lh);
+}
+
+.skeleton-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.skeleton-chips {
+  display: flex;
+  gap: 6px;
+}
+
+@keyframes skeleton-pulse {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+
+  50% {
+    opacity: 1;
+  }
+}
+
+/* The crossfade from skeleton to content: the skeleton, on its own opaque
+   card, dissolves over content already laid out underneath. `ease-in` holds it
+   near-opaque while the frame ramps, so the content shows through late. */
+.overlay {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.overlay--fade-out {
+  animation: fade-out 200ms ease-in both;
+}
+
+.overlay--reveal {
+  animation: fade-out 500ms ease-in both;
+}
+
+.overlay__blank {
+  block-size: 100%;
+  background: var(--pb-surface);
+}
+
+@keyframes appear {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes fade-out {
+  to {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skeleton,
+  .skeleton-group,
+  .overlay {
+    animation: none;
+  }
+}

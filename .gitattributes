@@ -1,0 +1,2 @@
+# Built MCP Apps card documents: regenerate with `npm run build` in cards/.
+src/pinboard_mcp_server/ui/generated/*.html linguist-generated=true -diff
