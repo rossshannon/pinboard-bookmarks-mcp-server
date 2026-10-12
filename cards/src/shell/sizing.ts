@@ -327,7 +327,10 @@ export const createSizeReporter = (channels: SizeChannels, measure: () => CardSi
   const flushOnConnect = (): void => {
     const size = pendingPreConnect
     pendingPreConnect = undefined
-    if (settled || size === undefined || isSameSize(lastSent, size)) return
+    // Not gated on `settled`: a render before a slow handshake settles first,
+    // and this is the only size the bridge will ever get for it. (A change
+    // from the &Open original, where the card never rendered pre-connect.)
+    if (size === undefined || isSameSize(lastSent, size)) return
     sendViaAppSmoothly(size)
   }
 

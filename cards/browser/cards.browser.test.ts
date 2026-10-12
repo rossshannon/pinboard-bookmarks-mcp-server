@@ -79,6 +79,24 @@ describe('theming', () => {
     await page.close()
   })
 
+  // The colour, not just `color-scheme`: a build that down-levels
+  // `light-dark()` keeps the property right and the paint wrong.
+  it('paints the host’s theme even when the reader’s OS prefers the other', async () => {
+    const paint = async (host: 'dark' | 'light', os: 'dark' | 'light'): Promise<string> => {
+      const { frame, page } = await render({ card: 'bookmarks', scenario: 'search', theme: host })
+      await page.emulateMedia({ colorScheme: os })
+      const colour = await frame.evaluate(() => getComputedStyle(document.querySelector('.card') ?? document.body).backgroundColor)
+      await page.close()
+      return colour
+    }
+
+    const dark = await paint('dark', 'dark')
+    const light = await paint('light', 'light')
+    expect(dark).not.toBe(light)
+    expect(await paint('dark', 'light')).toBe(dark)
+    expect(await paint('light', 'dark')).toBe(light)
+  })
+
   it('falls back to the reader’s own preference when the host reports none', async () => {
     const { frame, page } = await render({ card: 'tags', hostTheme: false, scenario: 'normal', theme: 'dark' })
     const scheme = await frame.evaluate(() => matchMedia('(prefers-color-scheme: dark)').matches)

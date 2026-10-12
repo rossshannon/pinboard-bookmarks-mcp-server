@@ -206,6 +206,24 @@ describe('createSizeReporter', () => {
     expect(harness.sendViaAppStep).not.toHaveBeenCalled()
   })
 
+  it('flushes the pre-connect size even when the render settled before the handshake resolved', () => {
+    // The ChatGPT fast path renders from window.openai before any handshake.
+    // A handshake slower than the 400ms settle window must still get a size
+    // over the bridge: a host that ignored the raw report has no other.
+    const harness = createHarness({ height: 100, width: 200 })
+    const reporter = createSizeReporter(harness.channels, harness.measure)
+
+    reporter.onRender()
+    vi.advanceTimersByTime(SIZE_SETTLE_DELAY_MS + 100)
+    expect(harness.sendViaApp).not.toHaveBeenCalled()
+
+    harness.isConnected.current = true
+    reporter.flushOnConnect()
+    vi.advanceTimersByTime(SIZE_RAMP_MAX_MS)
+
+    expect(harness.sendViaApp).toHaveBeenCalledExactlyOnceWith({ height: 100, width: 200 })
+  })
+
   it('the first report goes out whole, and every later change ramps from it', () => {
     // The host holds a placeholder of its own until the card speaks. Ramping
     // the first report from zero collapses that placeholder to a sliver and

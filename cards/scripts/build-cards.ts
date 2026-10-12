@@ -63,7 +63,16 @@ export const generatedPath = (card: CardName): string => path.join(GENERATED_DIR
  */
 export const buildCardHtml = async (card: CardName, outDirectory: string): Promise<string> => {
   await build({
-    build: { emptyOutDir: false, outDir: outDirectory, sourcemap: false },
+    build: {
+      // Browsers with native `light-dark()`. Below this, Lightning CSS rewrites
+      // every pair into variables switched by `prefers-color-scheme` alone, and
+      // the card would follow the reader's OS instead of the host's theme
+      // (`applyDocumentTheme` sets `color-scheme`, which the rewrite ignores).
+      cssTarget: ['chrome123', 'edge123', 'firefox120', 'safari17.5'],
+      emptyOutDir: false,
+      outDir: outDirectory,
+      sourcemap: false,
+    },
     configFile: false,
     logLevel: 'warn',
     plugins: [react(), viteSingleFile()],

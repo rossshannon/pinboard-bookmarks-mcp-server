@@ -38,15 +38,6 @@ async def mcp_client(mock_client):
         yield client
 
 
-def _field(model: Any, name: str, legacy: str) -> Any:
-    """A protocol field by its MCP SDK v2 name, or its v1 camelCase one: FastMCP 3 ships the v1 SDK."""
-    return (
-        getattr(model, name)
-        if name in type(model).model_fields
-        else getattr(model, legacy)
-    )
-
-
 def _fixtures(card: str) -> dict[str, Any]:
     return json.loads((FIXTURES / f"{card}.json").read_text(encoding="utf-8"))
 
@@ -86,9 +77,7 @@ class TestCardResources:
 
         for card in ui.CARDS:
             resource = resources[ui.card_uri(card)]
-            assert (
-                _field(resource, "mime_type", "mimeType") == "text/html;profile=mcp-app"
-            )
+            assert resource.mime_type == "text/html;profile=mcp-app"
             assert resource.meta is not None
             assert resource.meta["ui"] == {"prefersBorder": True}
 
@@ -97,18 +86,25 @@ class TestCardResources:
             result = await mcp_client.read_resource_mcp(ui.card_uri(card))
 
             (content,) = result.contents
-            assert (
-                _field(content, "mime_type", "mimeType") == "text/html;profile=mcp-app"
-            )
+            assert content.mime_type == "text/html;profile=mcp-app"
             assert content.text == ui.card_html(card)
             assert content.text.startswith("<!doctype html>")
 
     async def test_a_stale_fingerprint_still_resolves_to_the_running_build(
         self, mcp_client
     ):
-        result = await mcp_client.read_resource_mcp("ui://pinboard/bookmarks@0000")
+        # Served exactly as the current URI is: a host renders only an MCP App
+        # MIME type, and a fallback that came back as text/plain would be a
+        # card that silently never draws.
+        for card in ui.CARDS:
+            result = await mcp_client.read_resource_mcp(
+                f"ui://pinboard/{card.name}@0000"
+            )
 
-        assert result.contents[0].text == ui.card_html(ui.BOOKMARKS_CARD)
+            (content,) = result.contents
+            assert content.mime_type == "text/html;profile=mcp-app"
+            assert content.meta == ui.CARD_RESOURCE_META
+            assert content.text == ui.card_html(card)
 
     async def test_an_unknown_card_is_not_found(self, mcp_client):
         with pytest.raises(Exception, match="not found"):
@@ -262,7 +258,7 @@ class TestFixtureContract:
             "search_bookmarks", {"query": "x", "limit": 500}
         )
 
-        assert _field(result, "is_error", "isError")
+        assert result.is_error
         assert (
             result.content[0].text
             == _fixtures("bookmarks")["error"]["content"][0]["text"]
