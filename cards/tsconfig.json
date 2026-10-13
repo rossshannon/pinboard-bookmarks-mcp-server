@@ -1,0 +1,29 @@
+{
+  // One program for card source, tests and build scripts. Card code is browser
+  // code (DOM lib, JSX) that Vite bundles, so resolution is `bundler`; the
+  // build scripts run under Node's own type stripping, which is why `.ts`
+  // import extensions are allowed and nothing is emitted.
+  "compilerOptions": {
+    "strict": true,
+    "exactOptionalPropertyTypes": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    "jsx": "react-jsx",
+    "module": "preserve",
+    "moduleResolution": "bundler",
+    "target": "es2023",
+    "lib": ["es2023", "dom", "dom.iterable"],
+    "types": ["node"]
+  },
+  "include": ["src/**/*", "scripts/**/*", "test-support/**/*", "browser/**/*", "fixtures/**/*.json", "*.ts"]
+}

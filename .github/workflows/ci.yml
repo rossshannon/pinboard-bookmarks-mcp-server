@@ -49,3 +49,39 @@ jobs:
         file: ./coverage.xml
         flags: unittests
         name: codecov-umbrella
+
+  cards:
+    # The MCP Apps result cards (cards/): unit tests, a rebuild that must match
+    # the committed documents byte for byte, and the real-browser checks.
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: cards
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Node
+      uses: actions/setup-node@v4
+      with:
+        node-version: 24
+        cache: npm
+        cache-dependency-path: cards/package-lock.json
+
+    - name: Install dependencies
+      run: npm ci
+
+    - name: Type check
+      run: npm run type-check
+
+    - name: Unit tests
+      run: npm test
+
+    - name: Committed cards match a fresh build
+      run: npm run check
+
+    - name: Install Chromium
+      run: npx playwright-core install --with-deps chromium
+
+    - name: Browser checks
+      run: npm run test:browser

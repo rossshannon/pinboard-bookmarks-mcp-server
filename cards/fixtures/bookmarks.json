@@ -1,0 +1,575 @@
+{
+  "search": {
+    "structuredContent": {
+      "bookmarks": [
+        {
+          "id": "b000",
+          "url": "https://www.robinsloan.com/notes/home-cooked-app/",
+          "title": "An app can be a home-cooked meal",
+          "tags": [
+            "software",
+            "craft",
+            "essays"
+          ],
+          "notes": "Robin Sloan on writing software for an audience of four. The best argument I know for building small, personal tools.",
+          "saved_at": "2026-10-09T21:14:03Z"
+        },
+        {
+          "id": "b001",
+          "url": "https://modelcontextprotocol.io/docs/extensions/apps",
+          "title": "MCP Apps — interactive UI for MCP tools",
+          "tags": [
+            "mcp",
+            "ai",
+            "ui"
+          ],
+          "notes": "SEP-1865: ui:// resources, _meta.ui.resourceUri, and the postMessage bridge.",
+          "saved_at": "2026-10-08T07:42:51Z"
+        },
+        {
+          "id": "b002",
+          "url": "http://www.paulgraham.com/hwh.html",
+          "title": "How to Work Hard",
+          "tags": [
+            "essays",
+            "work"
+          ],
+          "notes": "",
+          "saved_at": "2026-10-05T18:03:00Z"
+        },
+        {
+          "id": "b003",
+          "url": "https://www.esa.int/Science_Exploration/Space_Science/Euclid",
+          "title": "Euclid: mapping the dark universe",
+          "tags": [
+            "astronomy",
+            "space",
+            ".toread"
+          ],
+          "notes": "Read the first data release notes before the Dublin astro society talk.",
+          "saved_at": "2026-10-02T11:30:00Z"
+        }
+      ],
+      "total": 4,
+      "query": "essays"
+    }
+  },
+  "extended": {
+    "structuredContent": {
+      "bookmarks": [
+        {
+          "id": "b000",
+          "url": "https://www.robinsloan.com/notes/home-cooked-app/",
+          "title": "An app can be a home-cooked meal",
+          "tags": [
+            "software",
+            "craft",
+            "essays"
+          ],
+          "notes": "Robin Sloan on writing software for an audience of four. The best argument I know for building small, personal tools.",
+          "saved_at": "2026-10-09T21:14:03Z"
+        },
+        {
+          "id": "b001",
+          "url": "https://modelcontextprotocol.io/docs/extensions/apps",
+          "title": "MCP Apps — interactive UI for MCP tools",
+          "tags": [
+            "mcp",
+            "ai",
+            "ui"
+          ],
+          "notes": "SEP-1865: ui:// resources, _meta.ui.resourceUri, and the postMessage bridge.",
+          "saved_at": "2026-10-08T07:42:51Z"
+        },
+        {
+          "id": "b002",
+          "url": "http://www.paulgraham.com/hwh.html",
+          "title": "How to Work Hard",
+          "tags": [
+            "essays",
+            "work"
+          ],
+          "notes": "",
+          "saved_at": "2026-10-05T18:03:00Z"
+        },
+        {
+          "id": "b003",
+          "url": "https://www.esa.int/Science_Exploration/Space_Science/Euclid",
+          "title": "Euclid: mapping the dark universe",
+          "tags": [
+            "astronomy",
+            "space",
+            ".toread"
+          ],
+          "notes": "Read the first data release notes before the Dublin astro society talk.",
+          "saved_at": "2026-10-02T11:30:00Z"
+        },
+        {
+          "id": "b004",
+          "url": "https://danluu.com/productivity-velocity/",
+          "title": "Some reasons to work on productivity and velocity",
+          "tags": [
+            "software",
+            "productivity"
+          ],
+          "notes": "",
+          "saved_at": "2026-09-28T09:10:00Z"
+        }
+      ],
+      "total": 5,
+      "query": "software",
+      "days_back": 365
+    }
+  },
+  "recent": {
+    "structuredContent": {
+      "bookmarks": [
+        {
+          "id": "b000",
+          "url": "https://www.robinsloan.com/notes/home-cooked-app/",
+          "title": "An app can be a home-cooked meal",
+          "tags": [
+            "software",
+            "craft",
+            "essays"
+          ],
+          "notes": "Robin Sloan on writing software for an audience of four. The best argument I know for building small, personal tools.",
+          "saved_at": "2026-10-09T21:14:03Z"
+        },
+        {
+          "id": "b001",
+          "url": "https://modelcontextprotocol.io/docs/extensions/apps",
+          "title": "MCP Apps — interactive UI for MCP tools",
+          "tags": [
+            "mcp",
+            "ai",
+            "ui"
+          ],
+          "notes": "SEP-1865: ui:// resources, _meta.ui.resourceUri, and the postMessage bridge.",
+          "saved_at": "2026-10-08T07:42:51Z"
+        },
+        {
+          "id": "b002",
+          "url": "http://www.paulgraham.com/hwh.html",
+          "title": "How to Work Hard",
+          "tags": [
+            "essays",
+            "work"
+          ],
+          "notes": "",
+          "saved_at": "2026-10-05T18:03:00Z"
+        }
+      ],
+      "total": 3,
+      "days": 7
+    }
+  },
+  "tagged": {
+    "structuredContent": {
+      "bookmarks": [
+        {
+          "id": "b000",
+          "url": "https://www.robinsloan.com/notes/home-cooked-app/",
+          "title": "An app can be a home-cooked meal",
+          "tags": [
+            "software",
+            "craft",
+            "essays"
+          ],
+          "notes": "Robin Sloan on writing software for an audience of four. The best argument I know for building small, personal tools.",
+          "saved_at": "2026-10-09T21:14:03Z"
+        },
+        {
+          "id": "b002",
+          "url": "http://www.paulgraham.com/hwh.html",
+          "title": "How to Work Hard",
+          "tags": [
+            "essays",
+            "work"
+          ],
+          "notes": "",
+          "saved_at": "2026-10-05T18:03:00Z"
+        },
+        {
+          "id": "b004",
+          "url": "https://danluu.com/productivity-velocity/",
+          "title": "Some reasons to work on productivity and velocity",
+          "tags": [
+            "software",
+            "productivity"
+          ],
+          "notes": "",
+          "saved_at": "2026-09-28T09:10:00Z"
+        }
+      ],
+      "total": 3,
+      "tags": [
+        "software",
+        "essays"
+      ],
+      "from_date": "2026-01-01",
+      "to_date": "2026-10-12"
+    }
+  },
+  "many": {
+    "structuredContent": {
+      "bookmarks": [
+        {
+          "id": "m000",
+          "url": "https://example.org/rust/0",
+          "title": "Rust reading, part 1",
+          "tags": [
+            "rust",
+            "reference"
+          ],
+          "notes": "Notes on rust, item 1.",
+          "saved_at": "2026-09-01T12:00:00Z"
+        },
+        {
+          "id": "m001",
+          "url": "https://example.org/typescript/1",
+          "title": "Typescript reading, part 2",
+          "tags": [
+            "typescript",
+            "reference"
+          ],
+          "notes": "",
+          "saved_at": "2026-09-02T12:00:00Z"
+        },
+        {
+          "id": "m002",
+          "url": "https://example.org/ruby/2",
+          "title": "Ruby reading, part 3",
+          "tags": [
+            "ruby",
+            "reference"
+          ],
+          "notes": "",
+          "saved_at": "2026-09-03T12:00:00Z"
+        },
+        {
+          "id": "m003",
+          "url": "https://example.org/python/3",
+          "title": "Python reading, part 4",
+          "tags": [
+            "python",
+            "reference"
+          ],
+          "notes": "Notes on python, item 4.",
+          "saved_at": "2026-09-04T12:00:00Z"
+        },
+        {
+          "id": "m004",
+          "url": "https://example.org/astronomy/4",
+          "title": "Astronomy reading, part 5",
+          "tags": [
+            "astronomy",
+            "reference"
+          ],
+          "notes": "",
+          "saved_at": "2026-09-05T12:00:00Z"
+        },
+        {
+          "id": "m005",
+          "url": "https://example.org/diy/5",
+          "title": "Diy reading, part 6",
+          "tags": [
+            "diy",
+            "reference"
+          ],
+          "notes": "",
+          "saved_at": "2026-09-06T12:00:00Z"
+        },
+        {
+          "id": "m006",
+          "url": "https://example.org/music/6",
+          "title": "Music reading, part 7",
+          "tags": [
+            "music",
+            "reference"
+          ],
+          "notes": "Notes on music, item 7.",
+          "saved_at": "2026-09-07T12:00:00Z"
+        },
+        {
+          "id": "m007",
+          "url": "https://example.org/film/7",
+          "title": "Film reading, part 8",
+          "tags": [
+            "film",
+            "reference"
+          ],
+          "notes": "",
+          "saved_at": "2026-09-08T12:00:00Z"
+        },
+        {
+          "id": "m008",
+          "url": "https://example.org/gaming/8",
+          "title": "Gaming reading, part 9",
+          "tags": [
+            "gaming",
+            "reference"
+          ],
+          "notes": "",
+          "saved_at": "2026-09-09T12:00:00Z"
+        },
+        {
+          "id": "m009",
+          "url": "https://example.org/macos/9",
+          "title": "Macos reading, part 10",
+          "tags": [
+            "macos",
+            "reference"
+          ],
+          "notes": "Notes on macos, item 10.",
+          "saved_at": "2026-09-10T12:00:00Z"
+        },
+        {
+          "id": "m010",
+          "url": "https://example.org/rust/10",
+          "title": "Rust reading, part 11",
+          "tags": [
+            "rust",
+            "reference"
+          ],
+          "notes": "",
+          "saved_at": "2026-09-11T12:00:00Z"
+        },
+        {
+          "id": "m011",
+          "url": "https://example.org/typescript/11",
+          "title": "Typescript reading, part 12",
+          "tags": [
+            "typescript",
+            "reference"
+          ],
+          "notes": "",
+          "saved_at": "2026-09-12T12:00:00Z"
+        },
+        {
+          "id": "m012",
+          "url": "https://example.org/ruby/12",
+          "title": "Ruby reading, part 13",
+          "tags": [
+            "ruby",
+            "reference"
+          ],
+          "notes": "Notes on ruby, item 13.",
+          "saved_at": "2026-09-13T12:00:00Z"
+        },
+        {
+          "id": "m013",
+          "url": "https://example.org/python/13",
+          "title": "Python reading, part 14",
+          "tags": [
+            "python",
+            "reference"
+          ],
+          "notes": "",
+          "saved_at": "2026-09-14T12:00:00Z"
+        },
+        {
+          "id": "m014",
+          "url": "https://example.org/astronomy/14",
+          "title": "Astronomy reading, part 15",
+          "tags": [
+            "astronomy",
+            "reference"
+          ],
+          "notes": "",
+          "saved_at": "2026-09-15T12:00:00Z"
+        },
+        {
+          "id": "m015",
+          "url": "https://example.org/diy/15",
+          "title": "Diy reading, part 16",
+          "tags": [
+            "diy",
+            "reference"
+          ],
+          "notes": "Notes on diy, item 16.",
+          "saved_at": "2026-09-16T12:00:00Z"
+        },
+        {
+          "id": "m016",
+          "url": "https://example.org/music/16",
+          "title": "Music reading, part 17",
+          "tags": [
+            "music",
+            "reference"
+          ],
+          "notes": "",
+          "saved_at": "2026-09-17T12:00:00Z"
+        },
+        {
+          "id": "m017",
+          "url": "https://example.org/film/17",
+          "title": "Film reading, part 18",
+          "tags": [
+            "film",
+            "reference"
+          ],
+          "notes": "",
+          "saved_at": "2026-09-18T12:00:00Z"
+        },
+        {
+          "id": "m018",
+          "url": "https://example.org/gaming/18",
+          "title": "Gaming reading, part 19",
+          "tags": [
+            "gaming",
+            "reference"
+          ],
+          "notes": "Notes on gaming, item 19.",
+          "saved_at": "2026-09-19T12:00:00Z"
+        },
+        {
+          "id": "m019",
+          "url": "https://example.org/macos/19",
+          "title": "Macos reading, part 20",
+          "tags": [
+            "macos",
+            "reference"
+          ],
+          "notes": "",
+          "saved_at": "2026-09-20T12:00:00Z"
+        },
+        {
+          "id": "m020",
+          "url": "https://example.org/rust/20",
+          "title": "Rust reading, part 21",
+          "tags": [
+            "rust",
+            "reference"
+          ],
+          "notes": "",
+          "saved_at": "2026-09-21T12:00:00Z"
+        },
+        {
+          "id": "m021",
+          "url": "https://example.org/typescript/21",
+          "title": "Typescript reading, part 22",
+          "tags": [
+            "typescript",
+            "reference"
+          ],
+          "notes": "Notes on typescript, item 22.",
+          "saved_at": "2026-09-22T12:00:00Z"
+        },
+        {
+          "id": "m022",
+          "url": "https://example.org/ruby/22",
+          "title": "Ruby reading, part 23",
+          "tags": [
+            "ruby",
+            "reference"
+          ],
+          "notes": "",
+          "saved_at": "2026-09-23T12:00:00Z"
+        }
+      ],
+      "total": 23,
+      "tags": [
+        "reference"
+      ],
+      "from_date": null,
+      "to_date": null
+    }
+  },
+  "empty": {
+    "structuredContent": {
+      "bookmarks": [],
+      "total": 0,
+      "query": "quasar knitting"
+    }
+  },
+  "hostile": {
+    "structuredContent": {
+      "bookmarks": [
+        {
+          "id": "h1",
+          "url": "javascript:alert(document.domain)",
+          "title": "<img src=x onerror=alert(1)><script>alert('x')</script>",
+          "tags": [
+            "<img src=x onerror=alert(1)><script>alert('x')</script>",
+            "</li><li>"
+          ],
+          "notes": "<img src=x onerror=alert(1)><script>alert('x')</script>\n\"quoted\" & <b>bold</b>",
+          "saved_at": "not a date"
+        },
+        {
+          "id": "h2",
+          "url": "data:text/html,<script>alert(1)</script>",
+          "title": "Data URL bookmark",
+          "tags": [],
+          "notes": "",
+          "saved_at": "2026-10-01T00:00:00Z"
+        }
+      ],
+      "total": 2,
+      "query": "<img src=x onerror=alert(1)><script>alert('x')</script>"
+    }
+  },
+  "long": {
+    "structuredContent": {
+      "bookmarks": [
+        {
+          "id": "l1",
+          "url": "https://very-long-subdomain-very-long-subdomain-very-long-subdomain-very-long-subdomain-very-long-subdomain-very-long-subdomain-example.com/path/path/path/path/path/path/path/path/path/path/path/path/path/path/path/path/path/path/path/path/path/path/path/path/path/path/path/path/path/path/?q=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+          "title": "An exceptionally long bookmark title that keeps going An exceptionally long bookmark title that keeps going An exceptionally long bookmark title that keeps going An exceptionally long bookmark title that keeps going SupercalifragilisticexpialidociousSupercalifragilisticexpialidociousSupercalifragilisticexpialidociousSupercalifragilisticexpialidociousSupercalifragilisticexpialidociousSupercalifragilisticexpialidocious",
+          "tags": [
+            "SupercalifragilisticexpialidociousSupercalifragilisticexpialidociousSupercalifragilisticexpialidociousSupercalifragilisticexpialidociousSupercalifragilisticexpialidociousSupercalifragilisticexpialidocious",
+            "tag-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+            "t0",
+            "t1",
+            "t2",
+            "t3",
+            "t4",
+            "t5",
+            "t6",
+            "t7",
+            "t8",
+            "t9",
+            "t10",
+            "t11",
+            "t12",
+            "t13",
+            "t14",
+            "t15",
+            "t16",
+            "t17",
+            "t18",
+            "t19",
+            "t20",
+            "t21",
+            "t22",
+            "t23",
+            "t24"
+          ],
+          "notes": "A long note paragraph. A long note paragraph. A long note paragraph. A long note paragraph. A long note paragraph. A long note paragraph. A long note paragraph. A long note paragraph. A long note paragraph. A long note paragraph. A long note paragraph. A long note paragraph. A long note paragraph. A long note paragraph. A long note paragraph. A long note paragraph. A long note paragraph. A long note paragraph. A long note paragraph. A long note paragraph. A long note paragraph. A long note paragraph. A long note paragraph. A long note paragraph. A long note paragraph. A long note paragraph. A long note paragraph. A long note paragraph. A long note paragraph. A long note paragraph. \n\nSecond paragraph SupercalifragilisticexpialidociousSupercalifragilisticexpialidociousSupercalifragilisticexpialidociousSupercalifragilisticexpialidociousSupercalifragilisticexpialidociousSupercalifragilisticexpialidocious",
+          "saved_at": "2026-10-11T23:59:59Z"
+        }
+      ],
+      "total": 1,
+      "query": "SupercalifragilisticexpialidociousSupercalifragilisticexpialidociousSupercalifragilisticexpialidociousSupercalifragilisticexpialidociousSupercalifragilisticexpialidociousSupercalifragilisticexpialidocious"
+    }
+  },
+  "error": {
+    "isError": true,
+    "content": [
+      {
+        "type": "text",
+        "text": "Error calling tool 'search_bookmarks': Limit must be between 1 and 100"
+      }
+    ]
+  },
+  "unauthenticated": {
+    "isError": true,
+    "content": [
+      {
+        "type": "text",
+        "text": "Error calling tool 'list_recent_bookmarks': 401 Client Error: Unauthorized for url: https://api.pinboard.in/v1/posts/recent"
+      }
+    ]
+  }
+}

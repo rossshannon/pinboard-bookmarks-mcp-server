@@ -1,0 +1,3 @@
+# Built MCP Apps card documents: regenerate with `npm run build` in cards/.
+# Collapsed in GitHub's diff view but still diffable, so a review can see what hosts receive.
+src/pinboard_mcp_server/ui/generated/*.html linguist-generated=true

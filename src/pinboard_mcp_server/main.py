@@ -7,16 +7,24 @@ from typing import Any
 
 from fastmcp import FastMCP  # type: ignore
 
+from pinboard_mcp_server import ui
 from pinboard_mcp_server.client import PinboardClient
 
 # Initialize FastMCP server
 mcp: FastMCP = FastMCP("Pinboard MCP Server")
 
+# MCP Apps result cards: each tool's descriptor points at the card that renders
+# its result, and the cards are served as ui:// resources. Read once, at import,
+# because the tools below are registered at import; PINBOARD_MCP_APPS_UI=false
+# switches all of it off.
+if ui.ui_enabled():
+    ui.register_card_resources(mcp)
+
 # Global client - will be initialized in main()
 client: PinboardClient
 
 
-@mcp.tool
+@mcp.tool(meta=ui.tool_meta(ui.BOOKMARKS_CARD))
 async def search_bookmarks(query: str, limit: int = 20) -> dict[str, Any]:
     """Search bookmarks by query string across titles, notes, and tags (recent focus).
 
@@ -39,7 +47,7 @@ async def search_bookmarks(query: str, limit: int = 20) -> dict[str, Any]:
     }
 
 
-@mcp.tool
+@mcp.tool(meta=ui.tool_meta(ui.BOOKMARKS_CARD))
 async def search_bookmarks_extended(
     query: str, days_back: int = 365, limit: int = 100
 ) -> dict[str, Any]:
@@ -70,7 +78,7 @@ async def search_bookmarks_extended(
     }
 
 
-@mcp.tool
+@mcp.tool(meta=ui.tool_meta(ui.BOOKMARKS_CARD))
 async def list_recent_bookmarks(days: int = 7, limit: int = 20) -> dict[str, Any]:
     """List bookmarks saved in the last N days.
 
@@ -92,7 +100,7 @@ async def list_recent_bookmarks(days: int = 7, limit: int = 20) -> dict[str, Any
     }
 
 
-@mcp.tool
+@mcp.tool(meta=ui.tool_meta(ui.BOOKMARKS_CARD))
 async def list_bookmarks_by_tags(
     tags: list[str],
     from_date: str | None = None,
@@ -143,7 +151,7 @@ async def list_bookmarks_by_tags(
     }
 
 
-@mcp.tool
+@mcp.tool(meta=ui.tool_meta(ui.TAGS_CARD))
 async def list_tags() -> list[dict[str, Any]]:
     """List all tags with their usage counts."""
     tags = await client.get_all_tags()

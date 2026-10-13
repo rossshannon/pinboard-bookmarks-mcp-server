@@ -7,7 +7,7 @@ Read-only access to Pinboard.in bookmarks for LLMs via Model Context Protocol (M
 
 ## Overview
 
-This server provides LLMs with the ability to search, filter, and retrieve bookmark metadata from Pinboard.in at inference time. Built on FastMCP 2.0, it offers four core tools for bookmark interaction while respecting Pinboard's rate limits and implementing intelligent caching.
+This server provides LLMs with the ability to search, filter, and retrieve bookmark metadata from Pinboard.in at inference time. Built on FastMCP, it offers five tools for bookmark interaction while respecting Pinboard's rate limits and implementing intelligent caching.
 
 ## Features
 
@@ -16,6 +16,7 @@ This server provides LLMs with the ability to search, filter, and retrieve bookm
 - **Smart caching** with LRU cache and automatic invalidation using `posts/update` endpoint
 - **Rate limiting** respects Pinboard's 3-second guideline between API calls
 - **Field mapping** converts Pinboard's legacy field names to intuitive ones (description→title, extended→notes)
+- **Result cards** for MCP Apps hosts: bookmarks and tags render as interactive cards in Claude, ChatGPT and other hosts that support [MCP Apps](https://modelcontextprotocol.io/docs/extensions/apps); other hosts see plain results as before
 - **Comprehensive testing** with integration test harnesses and CI validation
 
 ## Installation
@@ -134,6 +135,13 @@ What are my most used tags?
 ### Environment Variables
 
 - `PINBOARD_TOKEN` (required): Your Pinboard API token in format `username:token`
+- `PINBOARD_MCP_APPS_UI` (optional): set to `false` to turn off the result cards; on by default
+
+### Result cards (MCP Apps)
+
+Each tool links to a `ui://pinboard/…` card: a list of bookmarks (title, site, date, notes and tags, with the tags you searched for highlighted) for the four bookmark tools, and a bar chart of your most-used tags with a filter for `list_tags`. The cards follow the host's light or dark theme, use the host's fonts, open links through the host, and load nothing else from the network. Hosts without MCP Apps support ignore them.
+
+The cards are React, built into self-contained HTML under `src/pinboard_mcp_server/ui/generated/` and shipped with the package, so running the server needs no Node. See [docs/mcp-apps-ui.md](docs/mcp-apps-ui.md) for how they work and how to change them.
 
 ### Rate Limiting
 
@@ -207,7 +215,7 @@ pytest -v
 
 ### Architecture
 
-- **FastMCP 2.0**: MCP scaffolding with Tool abstraction and async FastAPI server
+- **FastMCP**: MCP scaffolding with Tool abstraction and async FastAPI server
 - **pinboard.py**: Pinboard API client wrapper with error handling
 - **Pydantic**: Data validation and serialization with JSON Schema
 - **ThreadPoolExecutor**: Bridges async MCP with sync pinboard.py library
@@ -218,6 +226,8 @@ pytest -v
 - `src/pinboard_mcp_server/main.py` - MCP server entry point and tool implementations
 - `src/pinboard_mcp_server/client.py` - Pinboard API client with caching
 - `src/pinboard_mcp_server/models.py` - Pydantic data models
+- `src/pinboard_mcp_server/ui/` - MCP Apps card resources and tool metadata
+- `cards/` - Source, fixtures and tests for the result cards (Node; see `docs/mcp-apps-ui.md`)
 - `tests/` - Comprehensive test suite
 - `tests/debug_bookmarks.py` - Debug utility for testing search functionality
 - `docs/TEST_HARNESS.md` - Documentation for test harnesses
