@@ -10,6 +10,7 @@ export const stubContext = (overrides: Partial<CardRenderContext> = {}): CardRen
   callTool: vi.fn().mockResolvedValue({ reason: 'not-connected', status: 'unavailable' }),
   canCallTools: () => false,
   error: undefined,
+  onConnect: () => () => undefined,
   links: { openLink: vi.fn().mockResolvedValue({}) },
   remeasure: vi.fn(),
   ...overrides,

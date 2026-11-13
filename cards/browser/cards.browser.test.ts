@@ -229,7 +229,10 @@ describe('link previews', () => {
     expect(await decodedImages(frame, '.bookmark__thumb img')).toBe(5)
     expect(await decodedImages(frame, 'img.favicon')).toBe(6)
     expect(await frame.locator('.bookmark__thumb--pending').count()).toBe(0)
+    // The page's own name, and beside it, always, the host the link goes to.
     expect(await frame.locator('.bookmark__site').first().innerText()).toBe('Robin Sloan')
+    expect(await frame.locator('.bookmark__host').first().innerText()).toBe('robinsloan.com')
+    expect(await frame.locator('.bookmark__host').count()).toBe(6)
     await page.close()
   })
 
@@ -373,6 +376,62 @@ describe('link previews', () => {
     await waitForSettle(page)
     const { document: documentHeight, iframe } = await heights(page, frame)
     expect(Math.abs(iframe - documentHeight)).toBeLessThanOrEqual(1)
+    await page.close()
+  })
+
+  it('asks once more about the rows the server was still looking up, and keeps their places meanwhile', async () => {
+    const { frame, page } = await render({ card: 'bookmarks', previews: 'pending', scenario: 'rich' })
+    // The first answer left two rows waiting, each still holding its thumbnail's place.
+    expect((await toolCalls(page))).toHaveLength(1)
+    expect(await frame.locator('.bookmark__thumb--pending').count()).toBe(2)
+
+    await expect.poll(async () => (await toolCalls(page)).length, { timeout: 15_000 }).toBe(2)
+    expect((await toolCalls(page))[1]?.arguments?.urls).toEqual([richUrls[2], richUrls[4]])
+    await expect.poll(() => frame.locator('.bookmark__thumb--pending').count(), { timeout: 10_000 }).toBe(0)
+    await expect.poll(() => decodedImages(frame, '.bookmark__thumb img'), { timeout: 10_000 }).toBe(5)
+    await waitForSettle(page)
+    const { document: documentHeight, iframe } = await heights(page, frame)
+    expect(Math.abs(iframe - documentHeight)).toBeLessThanOrEqual(1)
+    await page.close()
+  })
+
+  it('shows the host on a narrow row even when the page’s own name is long', async () => {
+    const { frame, page } = await render({ card: 'bookmarks', previews: 'ok', scenario: 'rich', width: 320 })
+
+    const lines = await frame.locator('.bookmark__source').evaluateAll(sources => sources.map((source) => {
+      const host = source.querySelector('.bookmark__host')
+      const box = host?.getBoundingClientRect()
+      return {
+        hostClipped: host === null || host.scrollWidth > host.clientWidth + 1,
+        hostWidth: box?.width ?? 0,
+        overflows: source.scrollWidth > source.clientWidth + 1,
+      }
+    }))
+    expect(lines).toHaveLength(6)
+    for (const line of lines) {
+      expect(line.hostWidth).toBeGreaterThan(20)
+      expect(line.overflows).toBe(false)
+    }
+    await page.close()
+  })
+
+  it('asks about the rows that scroll into view together in one call, not the first of them alone', async () => {
+    const { frame, page } = await render({ card: 'bookmarks', previews: 'ok', scenario: 'rich-many' })
+    await frame.getByRole('button', { name: 'Show all' }).click()
+    await waitForSettle(page)
+    const before = (await toolCalls(page)).length
+
+    // A whole window of rows arrives at once.
+    await page.evaluate(() => {
+      globalThis.scrollTo(0, document.documentElement.scrollHeight)
+    })
+    await expect.poll(() => frame.locator('.bookmark').last().locator('.bookmark__thumb--pending').count(), { timeout: 10_000 }).toBe(0)
+    await waitForSettle(page)
+
+    // The first call after the scroll carries the screenful, where an
+    // observer per row would have sent the first row on its own.
+    const afterScroll = (await toolCalls(page)).slice(before).map(call => call.arguments?.urls?.length ?? 0)
+    expect(afterScroll[0]).toBeGreaterThanOrEqual(4)
     await page.close()
   })
 

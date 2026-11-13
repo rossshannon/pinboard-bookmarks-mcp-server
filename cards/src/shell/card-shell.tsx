@@ -413,6 +413,7 @@ export const CardShell = ({ appName, children, skeleton, title }: CardShellPrope
       breadcrumbs,
       callTool: tools.callTool,
       canCallTools: tools.canCallTools,
+      onConnect: tools.onConnect,
       error: resultError,
       links,
       remeasure,

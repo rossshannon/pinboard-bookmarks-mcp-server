@@ -12,6 +12,10 @@
  * call tools for a card, the row is the bookmark alone and is complete as
  * that.
  *
+ * What a page says about itself is not to be trusted with the row's identity.
+ * The host the link really goes to is always shown, taken from the bookmark's
+ * URL; a page's name for itself only ever stands beside it.
+ *
  * Every value renders as a JSX child, so React's escaping is the whole XSS
  * story; the one real `href` goes through `<SafeLink>` and the one real `src`
  * through `<SafeImage>`.
@@ -24,6 +28,7 @@ import { useEffect, useId, useLayoutEffect, useRef, useState, useSyncExternalSto
 import type { CardRenderContext } from '../shell/card-shell.tsx'
 import type { PreviewLoader, PreviewState } from './preview-loader.ts'
 import type { BookmarkRow } from './read-bookmarks.ts'
+import type { RowWatcher } from './row-watcher.ts'
 
 import { countOf, instantTitle, shortDate } from '../format.ts'
 import { CardHead } from '../shell/card-head.tsx'
@@ -35,6 +40,7 @@ import { isWebUrl } from '../shell/safe-url.ts'
 import { describeSubject } from './describe.ts'
 import { createPreviewLoader } from './preview-loader.ts'
 import { matchedTags, readBookmarks } from './read-bookmarks.ts'
+import { createRowWatcher } from './row-watcher.ts'
 
 /**
  * Rows drawn before "Show all". A search returns up to a hundred and a tag
@@ -42,14 +48,6 @@ import { matchedTags, readBookmarks } from './read-bookmarks.ts'
  * card, and the agent has every row anyway.
  */
 export const INITIAL_ROWS = 8
-
-/**
- * How far outside the viewport a row past the first eight is when its preview
- * is asked for. Inside a host's cross-origin iframe a margin is ignored, by
- * the browser's own privacy rule, and the row is asked about as it comes into
- * view instead; the margin is for everywhere else.
- */
-const NEAR_VIEWPORT_MARGIN = '300px 0px'
 
 const NO_PREVIEW: PreviewState = { kind: 'none' }
 
@@ -122,6 +120,20 @@ const Notes = ({ notes, remeasure }: NotesProperties): ReactNode => {
 /** The first letter or digit of a site's name, for the tile that stands in for a favicon. */
 const initialOf = (host: string): string => /[\p{L}\p{N}]/u.exec(host)?.[0] ?? '·'
 
+const DOMAIN_LIKE = /^[^\s/@]+\.[^\s/@]+$/u
+
+/**
+ * A page's name for itself, when it is worth showing beside the host: not
+ * when it only repeats the host, and not when it is shaped like some other
+ * host, which beside the real one could only mislead.
+ */
+export const siteNameBeside = (siteName: string | undefined, host: string | undefined): string | undefined => {
+  if (siteName === undefined || host === undefined) return undefined
+  const plain = (value: string): string => value.trim().toLowerCase().replace(/^www\./u, '')
+  if (plain(siteName) === plain(host) || DOMAIN_LIKE.test(siteName.trim())) return undefined
+  return siteName
+}
+
 interface RowProperties {
   readonly context: CardRenderContext
   /** Ask about this row at once, not when it nears the viewport: the rows drawn before "Show all". */
@@ -130,9 +142,11 @@ interface RowProperties {
   /** `undefined` when previews are off for this card. */
   readonly previews: PreviewLoader | undefined
   readonly row: BookmarkRow
+  /** The card's one watcher for rows that are not `eager`. */
+  readonly watcher: RowWatcher
 }
 
-const Bookmark = ({ context, eager, matched, previews, row }: RowProperties): ReactNode => {
+const Bookmark = ({ context, eager, matched, previews, row, watcher }: RowProperties): ReactNode => {
   const element = useRef<HTMLLIElement>(null)
   const { url } = row
   const state = previews === undefined || url === undefined ? NO_PREVIEW : previews.state(url)
@@ -144,38 +158,33 @@ const Bookmark = ({ context, eager, matched, previews, row }: RowProperties): Re
   useEffect(() => {
     const target = element.current
     if (previews === undefined || url === undefined || !pending || !target) return undefined
-    if (eager || typeof IntersectionObserver !== 'function') {
+    if (eager) {
       previews.request([url])
       return undefined
     }
-    const observer = new IntersectionObserver((entries) => {
-      if (!entries.some(entry => entry.isIntersecting)) return
-      observer.disconnect()
-      previews.request([url])
-    }, { rootMargin: NEAR_VIEWPORT_MARGIN })
-    observer.observe(target)
-    return () => {
-      observer.disconnect()
-    }
-  }, [eager, pending, previews, url])
+    return watcher.watch(target, url)
+  }, [eager, pending, previews, url, watcher])
 
   const preview = state.kind === 'ready' ? state.preview : undefined
   const saved = shortDate(row.savedAt)
-  const site = preview?.siteName ?? row.host
+  const { host } = row
+  const siteName = siteNameBeside(preview?.siteName, host)
   // The owner's own words first; the page's description only fills the gap.
   const text = row.notes ?? preview?.description
 
   return (
     <li className="bookmark" ref={element}>
       <div className="bookmark__body">
-        {(site !== undefined || saved !== undefined) && (
+        {(host !== undefined || saved !== undefined) && (
           <p className="bookmark__source">
-            {site !== undefined && (
+            {host !== undefined && (
               <>
                 {preview?.favicon === undefined
-                  ? <span aria-hidden="true" className="favicon favicon--letter">{initialOf(row.host ?? site)}</span>
+                  ? <span aria-hidden="true" className="favicon favicon--letter">{initialOf(host)}</span>
                   : <SafeImage className="favicon" image={preview.favicon} />}
-                <span className="bookmark__site" title={row.host}>{site}</span>
+                {/* The page's own name may say anything; the host beside it is where the link goes. */}
+                {siteName !== undefined && <span className="bookmark__site">{siteName}</span>}
+                <span className="bookmark__host">{host}</span>
               </>
             )}
             {saved !== undefined && <time dateTime={row.savedAt} title={instantTitle(row.savedAt)}>{saved}</time>}
@@ -239,6 +248,16 @@ const usePreviews = (context: CardRenderContext, enabled: boolean): PreviewLoade
     loader.dispose()
   }, [loader])
 
+  // A call made before the bridge connected may have had no way through. When
+  // it connects, the loader picks up where it stopped, and the card renders
+  // again: `canCallTools()` may have a different answer now.
+  const [, setConnections] = useState(0)
+  const { onConnect } = context
+  useEffect(() => onConnect(() => {
+    loader.resume()
+    setConnections(count => count + 1)
+  }), [loader, onConnect])
+
   const active = enabled ? loader : undefined
   const version = useSyncExternalStore(active?.subscribe ?? subscribeToNothing, active?.version ?? versionOfNothing)
   const { remeasure } = context
@@ -259,6 +278,20 @@ export const BookmarksCard = ({ context, data }: BookmarksCardProperties): React
   // Read here, ahead of the error return, so the hook below always runs.
   const view = readBookmarks(data)
   const previews = usePreviews(context, context.error === undefined && view.previewsAvailable && context.canCallTools())
+
+  // Rows past the first eight ask for their previews as they near the
+  // viewport, through one watcher, so rows that arrive together are asked
+  // about together.
+  const latestPreviews = useRef(previews)
+  useEffect(() => {
+    latestPreviews.current = previews
+  })
+  const [watcher] = useState(() => createRowWatcher((urls) => {
+    latestPreviews.current?.request(urls)
+  }))
+  useEffect(() => () => {
+    watcher.dispose()
+  }, [watcher])
 
   // Growing or shrinking in place is a change of height the shell did not
   // cause, so it is asked to measure again once the rows are in the document.
@@ -294,7 +327,7 @@ export const BookmarksCard = ({ context, data }: BookmarksCardProperties): React
         : (
             <ol className="bookmarks">
               {shown.map((row, index) => (
-                <Bookmark context={context} eager={index < INITIAL_ROWS} key={row.key} matched={matched} previews={previews} row={row} />
+                <Bookmark context={context} eager={index < INITIAL_ROWS} key={row.key} matched={matched} previews={previews} row={row} watcher={watcher} />
               ))}
             </ol>
           )}

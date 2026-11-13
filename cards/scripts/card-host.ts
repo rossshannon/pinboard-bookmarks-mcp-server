@@ -57,10 +57,10 @@ export interface RenderOptions {
   /**
    * Proxy the card's tool calls, answering `get_link_previews` from this
    * preview fixture; `'rejected'` proxies them and refuses every one. Left
-   * out, the host does not offer tool calls at all. `rate-limited` and
-   * `busy` answer their first call from that fixture and later ones from
-   * `ok`, as a bridge whose limit has lifted, or whose queue has cleared,
-   * would.
+   * out, the host does not offer tool calls at all. `rate-limited`, `busy`
+   * and `pending` answer their first call from that fixture and later ones
+   * from `ok`, as a bridge whose limit has lifted, whose queue has cleared,
+   * or whose lookups have finished, would.
    */
   readonly previews?: 'rejected' | PreviewScenario
   /** Hold each tool call's answer back this long. */
@@ -235,9 +235,13 @@ export const renderCard = async (browser: Browser, options: RenderOptions): Prom
       if (previewDelayMs > 0) await new Promise(resolve => setTimeout(resolve, previewDelayMs))
       if (previews === 'rejected') return { error: 'Tool calls are not permitted for this app' }
       if (name !== 'get_link_previews') return { error: `Unknown tool: ${name}` }
-      const scenario = (previews === 'rate-limited' || previews === 'busy') && callNumber > 1 ? 'ok' : previews
+      const scenario = (previews === 'rate-limited' || previews === 'busy' || previews === 'pending') && callNumber > 1 ? 'ok' : previews
       const structuredContent = answerPreviews(scenario, toolArguments.urls ?? [])
-      return { result: { content: [{ text: JSON.stringify(structuredContent), type: 'text' }], structuredContent } }
+      // As the server answers: the data once, and a line of text beside it.
+      const entries = (structuredContent['previews'] ?? []) as ReadonlyArray<{ readonly status?: unknown }>
+      const found = entries.filter(entry => entry.status === 'ok').length
+      const text = `Link previews for the bookmarks card: ${String(found)} of ${String(entries.length)} found.`
+      return { result: { content: [{ text, type: 'text' }], structuredContent } }
     })
   }
   await page.setContent(await hostPage(options))

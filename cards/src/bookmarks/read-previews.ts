@@ -5,7 +5,9 @@
  * site_name, theme_color, image, favicon, retry? }], retry_after_seconds? }`,
  * one entry per URL asked about. `retry: true` marks an entry the bridge was
  * too busy to finish: what it carries is drawn, and the URL is worth asking
- * about once more. Read as defensively as the bookmarks are: the
+ * about once more. A `pending` status is a lookup the server was still
+ * running when it had to answer: nothing to draw yet, and worth asking about
+ * once more too. Read as defensively as the bookmarks are: the
  * server sanitises what it sends, and this assumes it did not. Only URLs the
  * card asked about are read, every string is a string or it is nothing, and
  * an image is drawable (`safe-image.ts`) or it is dropped.
@@ -34,6 +36,8 @@ export interface PreviewReply {
   readonly rateLimited: readonly string[]
   /** Settled URLs whose thumbnails the bridge was too busy to make: worth one more ask. */
   readonly busy: readonly string[]
+  /** URLs whose lookup was still running when the tool answered: no answer yet, worth one more ask. */
+  readonly pending: readonly string[]
   /** How long the tool said to leave it before asking again. */
   readonly retryAfterMs: number
 }
@@ -71,7 +75,7 @@ const readPreview = (entry: Record<string, unknown>): LinkPreview | undefined =>
 
 /**
  * Read a `get_link_previews` result against the URLs that were asked about.
- * Every asked URL comes back settled or rate-limited: one the tool left out,
+ * Every asked URL comes back settled, rate-limited or pending: one the tool left out,
  * or answered with a status the card does not know, settles as nothing.
  */
 export const readPreviews = (data: Record<string, unknown>, asked: readonly string[]): PreviewReply => {
@@ -79,20 +83,26 @@ export const readPreviews = (data: Record<string, unknown>, asked: readonly stri
   const settled = new Map<string, LinkPreview | undefined>()
   const rateLimited: string[] = []
   const busy: string[] = []
+  const pending: string[] = []
+  const held = (url: string): boolean => rateLimited.includes(url) || pending.includes(url)
   const entries = isUnknownArray(data['previews']) ? data['previews'] : []
   for (const entry of entries) {
     if (!isRecord(entry)) continue
     const url = entry['url']
-    if (typeof url !== 'string' || !wanted.has(url) || settled.has(url) || rateLimited.includes(url)) continue
+    if (typeof url !== 'string' || !wanted.has(url) || settled.has(url) || held(url)) continue
     if (entry['status'] === 'rate_limited') {
       rateLimited.push(url)
+      continue
+    }
+    if (entry['status'] === 'pending') {
+      pending.push(url)
       continue
     }
     settled.set(url, entry['status'] === 'ok' ? readPreview(entry) : undefined)
     if (entry['retry'] === true && (entry['status'] === 'ok' || entry['status'] === 'no_data')) busy.push(url)
   }
   for (const url of asked) {
-    if (!settled.has(url) && !rateLimited.includes(url)) settled.set(url, undefined)
+    if (!settled.has(url) && !held(url)) settled.set(url, undefined)
   }
-  return { busy, rateLimited, retryAfterMs: readRetryAfter(data['retry_after_seconds']), settled }
+  return { busy, pending, rateLimited, retryAfterMs: readRetryAfter(data['retry_after_seconds']), settled }
 }

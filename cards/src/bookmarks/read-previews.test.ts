@@ -101,6 +101,22 @@ describe('readPreviews', () => {
     expect(reply.rateLimited).toEqual([])
   })
 
+  it('reports a lookup the server was still running apart: not settled, worth another ask', () => {
+    const reply = readPreviews({ previews: [entry(A), { status: 'pending', url: B }] }, [A, B])
+
+    expect([...reply.settled.keys()]).toEqual([A])
+    expect(reply.pending).toEqual([B])
+    expect(reply.busy).toEqual([])
+    expect(reply.rateLimited).toEqual([])
+  })
+
+  it('draws nothing a pending entry carries', () => {
+    const reply = readPreviews({ previews: [entry(A, { status: 'pending' })] }, [A])
+
+    expect(reply.settled.has(A)).toBe(false)
+    expect(reply.pending).toEqual([A])
+  })
+
   it('marks a busy entry with no data too', () => {
     const reply = readPreviews({ previews: [{ retry: true, status: 'no_data', url: A }] }, [A])
 

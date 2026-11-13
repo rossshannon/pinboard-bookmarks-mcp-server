@@ -41,14 +41,14 @@ export const fixtureError = (card: keyof typeof CARD_FIXTURES, scenario: string)
  */
 export const PREVIEW_FIXTURES = previews as unknown as Readonly<Record<PreviewScenario, CardToolResultLike>>
 
-export type PreviewScenario = 'busy' | 'hostile' | 'mixed' | 'ok' | 'rate-limited'
+export type PreviewScenario = 'busy' | 'hostile' | 'mixed' | 'ok' | 'pending' | 'rate-limited'
 
 /**
  * Which preview scenarios each bookmarks fixture is captured and checked
  * with, beside the plain render on a host that cannot call tools at all.
  */
 export const PREVIEW_RUNS: Readonly<Record<string, readonly PreviewScenario[]>> = {
-  'rich': ['ok', 'mixed', 'hostile', 'rate-limited', 'busy'],
+  'rich': ['ok', 'mixed', 'hostile', 'rate-limited', 'busy', 'pending'],
   'rich-many': ['ok'],
 }
 

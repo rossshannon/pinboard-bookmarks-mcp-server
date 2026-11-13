@@ -227,7 +227,9 @@ ul {
 }
 
 /* Where it lives and when it was saved, above the title as a link card has
-   it: favicon, site, date. */
+   it: favicon, the page's name for itself if it has one, the host, the date.
+   The host is the part to trust, because it is where the link goes, so it is
+   the page's name that gives way when the line is short of room. */
 .bookmark__source {
   display: flex;
   align-items: center;
@@ -238,7 +240,8 @@ ul {
   min-inline-size: 0;
 }
 
-.bookmark__site {
+.bookmark__site,
+.bookmark__host {
   min-inline-size: 0;
   overflow: hidden;
   color: var(--pb-text-muted);
@@ -246,12 +249,42 @@ ul {
   white-space: nowrap;
 }
 
+/* Beside a page's own name the host does not shrink at all: sharing even a
+   fraction of a pixel of the squeeze would put an ellipsis on it. Only a
+   host too long for most of the line is cut. */
+.bookmark__site + .bookmark__host {
+  flex: none;
+  max-inline-size: 60%;
+}
+
+.bookmark__site + .bookmark__host::before {
+  content: "·";
+  margin-inline-end: 6px;
+}
+
+/* In a list too narrow for both, a phone's, the page's name is left out and
+   the host has the line. */
+@container (inline-size < 26rem) {
+  .bookmark__site {
+    display: none;
+  }
+
+  .bookmark__site + .bookmark__host {
+    flex: 0 1 auto;
+    max-inline-size: none;
+  }
+
+  .bookmark__site + .bookmark__host::before {
+    content: none;
+  }
+}
+
 .bookmark__source time {
   flex: none;
   white-space: nowrap;
 }
 
-.bookmark__site + time::before {
+.bookmark__host + time::before {
   content: "·";
   margin-inline-end: 6px;
 }

@@ -14,6 +14,11 @@
  * host that does not proxy tool calls or refuses this one, a tool that fails,
  * an answer that never comes — is one outcome, "unavailable", with the reason
  * kept for the breadcrumbs. The card carries on with what it has.
+ *
+ * Two of the reasons are not final. Before the handshake, "not-connected" and
+ * "rejected-before-connect" say only that the early channel did not work; the
+ * bridge may still connect, and `onConnect` tells a card when it has, so the
+ * card can ask again down the proper channel.
  */
 
 import type { BreadcrumbLog } from './breadcrumbs.ts'
@@ -31,6 +36,12 @@ export type ToolUnavailableReason =
   | 'not-connected'
   /** The host, or the server behind it, refused the call. */
   | 'rejected'
+  /**
+   * ChatGPT's `window.openai.callTool`, tried because the bridge had not
+   * connected yet, refused the call or answered with nothing readable. The
+   * bridge has not been tried.
+   */
+  | 'rejected-before-connect'
   /** Nothing came back in time. */
   | 'timeout'
   /** The tool ran and reported a failure. */
@@ -63,10 +74,16 @@ export interface ToolCaller {
    * for an answer that cannot come.
    */
   readonly canCallTools: () => boolean
+  /**
+   * Call `listener` when the bridge finishes its handshake; returns the
+   * unsubscribe. A call that was "unavailable" for want of a bridge is worth
+   * making again then, if `canCallTools()` still says so.
+   */
+  readonly onConnect: (listener: () => void) => () => void
 }
 
 export interface DeferredToolCaller extends ToolCaller {
-  /** Release the calls waiting for the bridge. Call once it has connected. */
+  /** Release the calls waiting for the bridge, and tell the `onConnect` listeners. Call once it has connected. */
   readonly flush: () => void
 }
 
@@ -97,6 +114,7 @@ export const createToolCaller = (
   timeoutMs = TOOL_CALL_TIMEOUT_MS,
 ): DeferredToolCaller => {
   const waiting: Array<() => void> = []
+  const connectListeners = new Set<() => void>()
 
   const send = async (name: string, toolArguments: Record<string, unknown>): Promise<ToolCallOutcome> => {
     let app = connectedApp()
@@ -104,7 +122,17 @@ export const createToolCaller = (
       const viaOpenAi = openAiCallTool()
       if (viaOpenAi) {
         breadcrumbs.record('callTool:openai', name)
-        return readOutcome(await viaOpenAi(name, toolArguments))
+        // What this channel resolves to is not documented, and a host may
+        // offer it without letting this tool through it. Neither says the
+        // bridge would refuse, so neither is final.
+        try {
+          const outcome = readOutcome(await viaOpenAi(name, toolArguments))
+          return outcome.status === 'unavailable' && outcome.reason === 'unreadable' ? unavailable('rejected-before-connect') : outcome
+        }
+        catch (error) {
+          breadcrumbs.record('callTool:error', describeRejection(error))
+          return unavailable('rejected-before-connect')
+        }
       }
       breadcrumbs.record('callTool:held', name)
       await new Promise<void>((resolve) => {
@@ -145,6 +173,13 @@ export const createToolCaller = (
     },
     flush: () => {
       for (const release of waiting.splice(0)) release()
+      for (const listener of connectListeners) listener()
+    },
+    onConnect: (listener) => {
+      connectListeners.add(listener)
+      return () => {
+        connectListeners.delete(listener)
+      }
     },
   }
 }

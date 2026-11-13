@@ -286,7 +286,8 @@ describe('BookmarksCard link previews', () => {
       expect(context.callTool).not.toHaveBeenCalled()
       expect(container.querySelector('.bookmark__thumb')).toBeNull()
       expect(rows()).toHaveLength(6)
-      expect(row(0).querySelector('.bookmark__site')).toHaveTextContent('robinsloan.com')
+      expect(row(0).querySelector('.bookmark__host')).toHaveTextContent('robinsloan.com')
+      expect(row(0).querySelector('.bookmark__site')).toBeNull()
     })
   })
 
@@ -316,10 +317,11 @@ describe('BookmarksCard link previews', () => {
       await settle()
 
       const first = row(0)
-      const site = first.querySelector('.bookmark__site')
-      expect(site).toHaveTextContent('Robin Sloan')
-      // The host is still there for anyone who wants to know where the link goes.
-      expect(site).toHaveAttribute('title', 'robinsloan.com')
+      expect(first.querySelector('.bookmark__site')).toHaveTextContent('Robin Sloan')
+      // Where the link really goes is on the row itself, after the page's own name, not in a tooltip.
+      expect(first.querySelector('.bookmark__host')).toHaveTextContent('robinsloan.com')
+      expect(first.querySelector('.bookmark__source')).toHaveTextContent(/^Robin Sloanrobinsloan\.com/)
+      expect(first.querySelector('.bookmark__source [title="robinsloan.com"]')).toBeNull()
       const favicon = first.querySelector('img.favicon')
       expect(favicon).toHaveAttribute('src', expect.stringMatching(/^data:image\/png;base64,/))
       expect(favicon).toHaveAttribute('alt', '')
@@ -383,11 +385,13 @@ describe('BookmarksCard link previews', () => {
         expect(row(index).querySelector('.favicon--letter')).not.toBeNull()
         expect(row(index).querySelector('.bookmark__notes')).toBeNull()
       }
-      expect(row(1).querySelector('.bookmark__site')).toHaveTextContent('modelcontextprotocol.io')
+      expect(row(1).querySelector('.bookmark__host')).toHaveTextContent('modelcontextprotocol.io')
+      expect(row(1).querySelector('.bookmark__site')).toBeNull()
       // A preview with a picture and no favicon keeps the letter tile; one with no site name keeps the host.
       expect(row(4).querySelector('.bookmark__thumb img')).not.toBeNull()
       expect(row(4).querySelector('.favicon--letter')).toHaveTextContent('w')
-      expect(row(4).querySelector('.bookmark__site')).toHaveTextContent('web.dev')
+      expect(row(4).querySelector('.bookmark__host')).toHaveTextContent('web.dev')
+      expect(row(4).querySelector('.bookmark__site')).toBeNull()
       expect(container.querySelector('.bookmark__thumb--pending')).toBeNull()
     })
 
@@ -412,6 +416,178 @@ describe('BookmarksCard link previews', () => {
     })
   })
 
+  describe('what a page calls itself', () => {
+    const withSiteName = (siteName: unknown): CardRenderContext => previewContext('ok', {
+      callTool: vi.fn<CardRenderContext['callTool']>((_name, toolArguments) => Promise.resolve({
+        data: { previews: (toolArguments['urls'] as string[]).map(url => ({ site_name: siteName, status: 'ok', url })) },
+        status: 'ok',
+      })),
+    })
+
+    it.each([
+      ['the host again', 'robinsloan.com'],
+      ['the host in other letters', 'RobinSloan.com'],
+      ['the host with www.', 'www.robinsloan.com'],
+      ['some other host', 'paypal.com'],
+      ['some other host, dressed up', 'accounts.google.com'],
+    ])('is not shown when it is %s', async (_name, siteName) => {
+      renderScenario('rich', withSiteName(siteName))
+      await settle()
+
+      expect(row(0).querySelector('.bookmark__site')).toBeNull()
+      expect(row(0).querySelector('.bookmark__host')).toHaveTextContent('robinsloan.com')
+      expect(row(0).querySelector('.bookmark__source')).not.toHaveTextContent('paypal')
+    })
+
+    it('is shown beside the host, never in place of it', async () => {
+      renderScenario('rich', withSiteName('PayPal — Secure Login'))
+      await settle()
+
+      for (const each of rows()) {
+        expect(each.querySelector('.bookmark__site')).toHaveTextContent('PayPal — Secure Login')
+        expect(each.querySelector('.bookmark__host')?.textContent).toMatch(/^[a-z0-9.-]+$/)
+        // The name first, then the host, then the date.
+        const [site, host] = each.querySelectorAll('.bookmark__source > span:not(.favicon)')
+        expect(site).toHaveClass('bookmark__site')
+        expect(host).toHaveClass('bookmark__host')
+      }
+    })
+  })
+
+  describe('when the first call had no way through', () => {
+    /** A context whose `onConnect` listeners the test fires, as the shell does at the handshake. */
+    const connectable = (overrides: Partial<CardRenderContext>): { connect: () => void, context: CardRenderContext } => {
+      const listeners = new Set<() => void>()
+      const context = previewContext('ok', {
+        onConnect: (listener) => {
+          listeners.add(listener)
+          return () => {
+            listeners.delete(listener)
+          }
+        },
+        ...overrides,
+      })
+      return {
+        connect: () => {
+          act(() => {
+            for (const listener of listeners) listener()
+          })
+        },
+        context,
+      }
+    }
+
+    it('settles to the plain rows, then asks again when the bridge connects', async () => {
+      let connected = false
+      const { connect, context } = connectable({
+        callTool: vi.fn<CardRenderContext['callTool']>((_name, toolArguments) => Promise.resolve(connected
+          ? { data: answerPreviews('ok', toolArguments['urls'] as string[]), status: 'ok' }
+          : { reason: 'rejected-before-connect', status: 'unavailable' })),
+      })
+      const { container } = renderScenario('rich', context)
+      await settle()
+
+      expect(context.callTool).toHaveBeenCalledOnce()
+      expect(container.querySelector('.bookmark__thumb')).toBeNull()
+
+      connected = true
+      connect()
+      await settle()
+
+      expect(askedOf(context.callTool)).toEqual([urlsOf('rich'), urlsOf('rich')])
+      expect(container.querySelectorAll('.bookmark__thumb img')).toHaveLength(5)
+      expect(container.querySelector('.bookmark__thumb--pending')).toBeNull()
+    })
+
+    it('stays settled when the host that connects refuses too', async () => {
+      const { connect, context } = connectable({
+        callTool: vi.fn<CardRenderContext['callTool']>()
+          .mockResolvedValueOnce({ reason: 'not-connected', status: 'unavailable' })
+          .mockResolvedValue({ reason: 'rejected', status: 'unavailable' }),
+      })
+      const { container } = renderScenario('rich', context)
+      await settle()
+      connect()
+      await settle()
+      connect()
+      await settle()
+
+      expect(context.callTool).toHaveBeenCalledTimes(2)
+      expect(container.querySelector('.bookmark__thumb')).toBeNull()
+    })
+
+    it('starts asking at the handshake on a host that had no channel before it', async () => {
+      let canCall = false
+      const { connect, context } = connectable({ canCallTools: () => canCall })
+      const { container } = renderScenario('rich', context)
+      await settle()
+      expect(context.callTool).not.toHaveBeenCalled()
+
+      canCall = true
+      connect()
+      await settle()
+
+      expect(context.callTool).toHaveBeenCalledExactlyOnceWith('get_link_previews', { urls: urlsOf('rich') })
+      expect(container.querySelectorAll('.bookmark__thumb img')).toHaveLength(5)
+    })
+  })
+
+  describe('when the server was still looking some pages up', () => {
+    it('keeps those rows’ places, asks once more, and draws what it finds', async () => {
+      vi.useFakeTimers()
+      try {
+        let calls = 0
+        const context = previewContext('ok', {
+          callTool: vi.fn<CardRenderContext['callTool']>((_name, toolArguments) => {
+            calls += 1
+            return Promise.resolve({ data: answerPreviews(calls === 1 ? 'pending' : 'ok', toolArguments['urls'] as string[]), status: 'ok' })
+          }),
+        })
+        const { container } = renderScenario('rich', context)
+        await settle()
+
+        expect(container.querySelectorAll('.bookmark__thumb--pending')).toHaveLength(2)
+        expect(row(2).querySelector('.bookmark__thumb--pending')).not.toBeNull()
+        expect(row(0).querySelector('.bookmark__thumb img')).not.toBeNull()
+
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(5000)
+        })
+        await settle()
+
+        expect(askedOf(context.callTool)).toEqual([urlsOf('rich'), [urlsOf('rich')[2], urlsOf('rich')[4]]])
+        expect(container.querySelector('.bookmark__thumb--pending')).toBeNull()
+        expect(row(4).querySelector('.bookmark__thumb img')).not.toBeNull()
+      }
+      finally {
+        vi.useRealTimers()
+      }
+    })
+
+    it('gives the places back when the second answer is pending too', async () => {
+      vi.useFakeTimers()
+      try {
+        const context = previewContext('pending')
+        const { container } = renderScenario('rich', context)
+        await settle()
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(5000)
+        })
+        await settle()
+
+        expect(context.callTool).toHaveBeenCalledTimes(2)
+        expect(container.querySelector('.bookmark__thumb--pending')).toBeNull()
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(600_000)
+        })
+        expect(context.callTool).toHaveBeenCalledTimes(2)
+      }
+      finally {
+        vi.useRealTimers()
+      }
+    })
+  })
+
   describe('against a server that sanitised nothing', () => {
     it('draws no image from anything but an inline raster, and no markup at all', async () => {
       const { container } = renderScenario('rich', previewContext('hostile'))
@@ -430,6 +606,8 @@ describe('BookmarksCard link previews', () => {
       expect(container.innerHTML).not.toContain('evil.example')
       // The markup arrives as text.
       expect(row(0).querySelector('.bookmark__site')?.textContent).toBe('<img src=x onerror=alert(1)><script>alert(\'x\')</script>')
+      // Whatever a page calls itself, every row still says where its link goes.
+      for (const each of rows()) expect(each.querySelector('.bookmark__host')?.textContent).toMatch(/^[a-z0-9.-]+$/)
       // An unknown status is not a preview, whatever came with it.
       expect(row(4)).not.toHaveTextContent('A status the card has never heard of.')
       expect(container.querySelector('.bookmark__thumb--pending')).toBeNull()
@@ -586,6 +764,19 @@ describe('BookmarksCard link previews', () => {
         observe(target: Element): void {
           this.record.targets.push(target)
         }
+
+        unobserve(target: Element): void {
+          const index = this.record.targets.indexOf(target)
+          if (index !== -1) this.record.targets.splice(index, 1)
+        }
+      })
+    }
+    /** What a browser does: everything one observer saw change, in one callback. */
+    const scrollAllIntoView = (targets: readonly Element[]): void => {
+      const observer = observers.find(candidate => targets.every(target => candidate.targets.includes(target)))
+      if (!observer) throw new Error('no one observer is watching all of those rows')
+      act(() => {
+        observer.callback(targets.map(target => ({ isIntersecting: true, target }) as IntersectionObserverEntry), observer as unknown as IntersectionObserver)
       })
     }
     const scrollIntoView = (target: Element, isIntersecting = true): void => {
@@ -614,9 +805,10 @@ describe('BookmarksCard link previews', () => {
       fireEvent.click(screen.getByRole('button', { name: 'Show all' }))
       await settle()
 
-      // Twelve more rows drawn, each watched, with its place held, and nothing asked yet.
+      // Twelve more rows drawn, each watched by the card's one observer, with its place held, and nothing asked yet.
       expect(rows()).toHaveLength(20)
-      expect(observers.filter(observer => observer.targets.length > 0)).toHaveLength(12)
+      expect(observers).toHaveLength(1)
+      expect(observers[0]?.targets).toEqual(rows().slice(8))
       expect(observers.every(observer => observer.options?.root === undefined)).toBe(true)
       expect(container.querySelectorAll('.bookmark__thumb--pending')).toHaveLength(12)
       expect(context.callTool).toHaveBeenCalledOnce()
@@ -652,6 +844,25 @@ describe('BookmarksCard link previews', () => {
       expect(new Set(asked.flat()).size).toBe(20)
     })
 
+    it('asks about rows that come into view together in one call, not the first alone', async () => {
+      stubIntersectionObserver()
+      const context = previewContext('ok')
+      renderScenario('rich-many', context)
+      await settle()
+      fireEvent.click(screen.getByRole('button', { name: 'Show all' }))
+      await settle()
+
+      // Six rows scroll in at once, reported out of order as a browser may.
+      scrollAllIntoView([row(11), row(8), row(13), row(9), row(12), row(10)])
+      await settle()
+
+      const asked = askedOf(context.callTool)
+      expect(asked).toHaveLength(2)
+      expect(asked[1]).toEqual(urlsOf('rich-many').slice(8, 14))
+      // Reported rows are no longer watched; the rest still are.
+      expect(observers[0]?.targets).toEqual(rows().slice(14))
+    })
+
     it('does not ask twice for rows hidden and shown again', async () => {
       stubIntersectionObserver()
       const context = previewContext('ok')
@@ -668,7 +879,8 @@ describe('BookmarksCard link previews', () => {
       await settle()
 
       expect(context.callTool).toHaveBeenCalledTimes(before)
-      expect(observers.filter(observer => observer.targets.length > 0)).toHaveLength(0)
+      expect(observers).toHaveLength(1)
+      expect(observers[0]?.targets).toHaveLength(0)
       // Straight from the card's cache.
       expect(row(19).querySelector('.bookmark__thumb--pending')).toBeNull()
     })

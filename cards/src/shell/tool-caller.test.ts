@@ -165,11 +165,27 @@ describe('createToolCaller', () => {
       expect(labels(breadcrumbs)).toContain('callTool:openai')
     })
 
-    it('is unavailable when ChatGPT’s callTool rejects', async () => {
+    it('says so apart when ChatGPT’s callTool rejects: the bridge has not been tried', async () => {
       globalThis.openai = { callTool: vi.fn().mockRejectedValue(new Error('denied')) }
+      const breadcrumbs = createBreadcrumbLog()
+      const tools = createToolCaller(() => null, breadcrumbs)
+
+      expect(await tools.callTool('t', {})).toEqual({ reason: 'rejected-before-connect', status: 'unavailable' })
+      expect(labels(breadcrumbs)).toContain('callTool:error')
+    })
+
+    it.each([undefined, 'done', {}, { content: [] }])('takes an answer it cannot read from ChatGPT’s callTool (%j) the same way', async (answer) => {
+      globalThis.openai = { callTool: vi.fn().mockResolvedValue(answer) }
       const tools = createToolCaller(() => null, createBreadcrumbLog())
 
-      expect(await tools.callTool('t', {})).toEqual({ reason: 'rejected', status: 'unavailable' })
+      expect(await tools.callTool('t', {})).toEqual({ reason: 'rejected-before-connect', status: 'unavailable' })
+    })
+
+    it('still takes a tool’s own failure through ChatGPT’s callTool as final', async () => {
+      globalThis.openai = { callTool: vi.fn().mockResolvedValue({ content: [{ text: 'no', type: 'text' }], isError: true }) }
+      const tools = createToolCaller(() => null, createBreadcrumbLog())
+
+      expect(await tools.callTool('t', {})).toEqual({ reason: 'tool-error', status: 'unavailable' })
     })
 
     it('prefers the bridge to window.openai once it is connected', async () => {
@@ -179,6 +195,22 @@ describe('createToolCaller', () => {
 
       expect(await tools.callTool('t', {})).toEqual({ data: { from: 'bridge' }, status: 'ok' })
       expect(viaOpenAi).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('onConnect', () => {
+    it('tells its listeners when the shell flushes, until they unsubscribe', () => {
+      const tools = createToolCaller(() => null, createBreadcrumbLog())
+      const listener = vi.fn()
+      const unsubscribe = tools.onConnect(listener)
+
+      expect(listener).not.toHaveBeenCalled()
+      tools.flush()
+      expect(listener).toHaveBeenCalledOnce()
+
+      unsubscribe()
+      tools.flush()
+      expect(listener).toHaveBeenCalledOnce()
     })
   })
 

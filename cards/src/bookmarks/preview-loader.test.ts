@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { ToolCallOutcome } from '../shell/tool-caller.ts'
 import type { PreviewLoader } from './preview-loader.ts'
 
-import { BUSY_RETRY_DELAY_MS, createPreviewLoader, PREVIEW_BATCH_SIZE, PREVIEW_TOOL } from './preview-loader.ts'
+import { BUSY_RETRY_DELAY_MS, createPreviewLoader, isPreviewableUrl, MAX_PREVIEW_URL_LENGTH, PENDING_RETRY_DELAY_MS, PREVIEW_BATCH_SIZE, PREVIEW_TOOL } from './preview-loader.ts'
 
 const url = (index: number): string => `https://example.com/${String(index)}`
 const urls = (count: number, from = 0): string[] => Array.from({ length: count }, (_, index) => url(from + index))
@@ -179,6 +179,264 @@ describe('createPreviewLoader', () => {
     await settle()
     expect(listener).toHaveBeenCalledOnce()
     expect(loader.version()).toBe(2)
+  })
+
+  describe('what it will ask about', () => {
+    it.each([
+      'https://example.com/',
+      'http://example.com/a?b=c#d',
+      'HTTPS://EXAMPLE.COM/',
+      `https://example.com/${'a'.repeat(MAX_PREVIEW_URL_LENGTH - 'https://example.com/'.length)}`,
+    ])('is a URL the server would look up: %s', (candidate) => {
+      expect(isPreviewableUrl(candidate)).toBe(true)
+    })
+
+    it.each([
+      ['a script URL', 'javascript:alert(1)'],
+      ['a relative path', '/relative'],
+      ['no host', 'https:///path'],
+      ['a space inside', 'https://example.com/a b'],
+      ['a trailing newline', 'https://example.com/\n'],
+      ['a tab inside', 'https://example.com/a\tb'],
+      ['a host that does not parse', 'https://[not-a-host]/'],
+      ['one character too long', `https://example.com/${'a'.repeat(MAX_PREVIEW_URL_LENGTH - 'https://example.com/'.length + 1)}`],
+    ])('is not %s', (_name, candidate) => {
+      expect(isPreviewableUrl(candidate)).toBe(false)
+    })
+
+    it('leaves a URL the server would refuse out of the batch, and holds no place for it', async () => {
+      const { calls, loader } = harness()
+      const tooLong = `https://example.com/${'a'.repeat(MAX_PREVIEW_URL_LENGTH)}`
+
+      loader.request([url(0), tooLong, 'https://example.com/a b', url(1)])
+      await settle()
+
+      expect(call(calls, 0).urls).toEqual([url(0), url(1)])
+      expect(loader.state(tooLong)).toEqual({ kind: 'none' })
+      expect(loader.state(url(0))).toEqual({ kind: 'pending' })
+    })
+  })
+
+  describe('when the bridge had not connected yet', () => {
+    it.each(['not-connected', 'rejected-before-connect'] as const)('is suspended, not stopped, by "%s"', async (reason) => {
+      const { calls, loader, record } = harness()
+      const listener = vi.fn()
+      loader.subscribe(listener)
+
+      loader.request(urls(10))
+      await settle()
+      call(calls, 0).answer({ reason, status: 'unavailable' })
+      await settle()
+
+      // It looks stopped: no places held, nothing more sent.
+      expect(loader.state(url(0))).toEqual({ kind: 'none' })
+      expect(loader.state(url(9))).toEqual({ kind: 'none' })
+      expect(calls).toHaveLength(1)
+      expect(record).toHaveBeenCalledWith('previews:suspended', reason)
+      expect(listener).toHaveBeenCalledOnce()
+
+      loader.resume()
+      await settle()
+
+      // The same URLs, in the same order, and the rows wait again.
+      expect(listener).toHaveBeenCalledTimes(2)
+      expect(call(calls, 1).urls).toEqual(urls(8))
+      expect(loader.state(url(9))).toEqual({ kind: 'pending' })
+      call(calls, 1).answer(ok(call(calls, 1).urls))
+      await settle()
+      expect(loader.state(url(0)).kind).toBe('ready')
+      expect(call(calls, 2).urls).toEqual(urls(2, 8))
+    })
+
+    it('remembers what is requested while suspended', async () => {
+      const { calls, loader } = harness()
+
+      loader.request([url(0)])
+      await settle()
+      call(calls, 0).answer({ reason: 'not-connected', status: 'unavailable' })
+      await settle()
+      loader.request([url(1)])
+      await settle()
+      expect(calls).toHaveLength(1)
+
+      loader.resume()
+      await settle()
+
+      expect(call(calls, 1).urls).toEqual([url(0), url(1)])
+    })
+
+    it('resumes once: unavailable after that is final', async () => {
+      const { calls, loader, record } = harness()
+
+      loader.request([url(0)])
+      await settle()
+      call(calls, 0).answer({ reason: 'rejected-before-connect', status: 'unavailable' })
+      await settle()
+      loader.resume()
+      await settle()
+      call(calls, 1).answer({ reason: 'not-connected', status: 'unavailable' })
+      await settle()
+      loader.resume()
+      await settle()
+
+      expect(calls).toHaveLength(2)
+      expect(record).toHaveBeenCalledWith('previews:stopped', 'not-connected')
+      expect(loader.state(url(0))).toEqual({ kind: 'none' })
+    })
+
+    it('does nothing when resumed without having been suspended', async () => {
+      const { calls, loader } = harness()
+      const listener = vi.fn()
+      loader.subscribe(listener)
+
+      loader.resume()
+      loader.request([url(0)])
+      await settle()
+      call(calls, 0).answer({ reason: 'rejected', status: 'unavailable' })
+      await settle()
+      loader.resume()
+      await settle()
+
+      expect(calls).toHaveLength(1)
+      expect(listener).toHaveBeenCalledOnce()
+    })
+  })
+
+  describe('when the server was still looking a page up', () => {
+    const pendingFor = (which: (url: string) => boolean) => (asked: string): string => which(asked) ? 'pending' : 'ok'
+
+    it('keeps the row waiting and asks about it once more a few seconds on', async () => {
+      const { calls, loader, record, timers } = harness()
+
+      loader.request(urls(3))
+      await settle()
+      call(calls, 0).answer(ok(call(calls, 0).urls, pendingFor(each => each === url(1))))
+      await settle()
+
+      expect(loader.state(url(0)).kind).toBe('ready')
+      expect(loader.state(url(1))).toEqual({ kind: 'pending' })
+      expect(timers).toHaveLength(1)
+      expect(timers[0]?.delayMs).toBe(PENDING_RETRY_DELAY_MS)
+      expect(record).toHaveBeenCalledWith('previews:pending', expect.stringContaining('1 again'))
+      // Asking again in the meantime does not send it twice.
+      loader.request([url(1)])
+      await settle()
+      expect(calls).toHaveLength(1)
+
+      timers[0]?.fire()
+      await settle()
+      expect(call(calls, 1).urls).toEqual([url(1)])
+      call(calls, 1).answer(ok([url(1)]))
+      await settle()
+
+      expect(loader.state(url(1)).kind).toBe('ready')
+    })
+
+    it('does not hold up the rest of the queue while it waits', async () => {
+      const { calls, loader } = harness()
+
+      loader.request(urls(10))
+      await settle()
+      call(calls, 0).answer(ok(call(calls, 0).urls, pendingFor(() => true)))
+      await settle()
+
+      expect(call(calls, 1).urls).toEqual(urls(2, 8))
+    })
+
+    it('gives the row nothing when it is still pending the second time', async () => {
+      const { calls, loader, timers } = harness()
+
+      loader.request([url(1), url(2)])
+      await settle()
+      call(calls, 0).answer(ok(call(calls, 0).urls, pendingFor(each => each === url(1))))
+      await settle()
+      timers[0]?.fire()
+      await settle()
+      call(calls, 1).answer(ok([url(1)], () => 'pending'))
+      await settle()
+
+      expect(loader.state(url(1))).toEqual({ kind: 'none' })
+      expect(timers).toHaveLength(1)
+      // Nothing stopped: the rest carries on.
+      expect(loader.state(url(2)).kind).toBe('ready')
+      loader.request([url(3)])
+      await settle()
+      expect(call(calls, 2).urls).toEqual([url(3)])
+    })
+  })
+
+  describe('second chances are counted apart', () => {
+    const busyOnce = (asked: readonly string[]): ToolCallOutcome => ({
+      data: { previews: asked.map(each => ({ retry: true, site_name: 'Text only', status: 'ok', url: each })) },
+      status: 'ok',
+    })
+
+    it('still retries a rate-limited URL after its pending retry was used', async () => {
+      const { calls, loader, timers } = harness()
+
+      loader.request([url(1)])
+      await settle()
+      call(calls, 0).answer(ok([url(1)], () => 'pending'))
+      await settle()
+      timers[0]?.fire()
+      await settle()
+      call(calls, 1).answer(ok([url(1)], () => 'rate_limited', { retry_after_seconds: 3 }))
+      await settle()
+
+      // Held for the limit, not given up on.
+      expect(loader.state(url(1))).toEqual({ kind: 'pending' })
+      expect(timers[1]?.delayMs).toBe(3000)
+      timers[1]?.fire()
+      await settle()
+      call(calls, 2).answer(ok([url(1)]))
+      await settle()
+
+      expect(loader.state(url(1)).kind).toBe('ready')
+    })
+
+    it('still gives a rate-limited URL its busy retry afterwards', async () => {
+      const { calls, loader, timers } = harness()
+
+      loader.request([url(1)])
+      await settle()
+      call(calls, 0).answer(ok([url(1)], () => 'rate_limited', { retry_after_seconds: 3 }))
+      await settle()
+      timers[0]?.fire()
+      await settle()
+      call(calls, 1).answer(busyOnce([url(1)]))
+      await settle()
+
+      // The limit's retry is spent; the busy one is not.
+      expect(timers).toHaveLength(2)
+      expect(timers[1]?.delayMs).toBe(BUSY_RETRY_DELAY_MS)
+      timers[1]?.fire()
+      await settle()
+
+      expect(call(calls, 2).urls).toEqual([url(1)])
+    })
+
+    it('does not stop the loader when a URL that used its busy retry is limited for the first time', async () => {
+      const { calls, loader, record, timers } = harness()
+
+      loader.request([url(1), url(2)])
+      await settle()
+      call(calls, 0).answer({
+        data: { previews: [{ retry: true, status: 'no_data', url: url(1) }, { site_name: 'Two', status: 'ok', url: url(2) }] },
+        status: 'ok',
+      })
+      await settle()
+      timers[0]?.fire()
+      await settle()
+      // The row already has its answer (nothing), so the limit is not held against it.
+      call(calls, 1).answer(ok([url(1)], () => 'rate_limited', { retry_after_seconds: 2 }))
+      await settle()
+
+      expect(record).not.toHaveBeenCalledWith('previews:stopped', expect.anything())
+      loader.request([url(3)])
+      timers.at(-1)?.fire()
+      await settle()
+      expect(calls.length).toBeGreaterThan(2)
+    })
   })
 
   describe('when a call is unavailable', () => {

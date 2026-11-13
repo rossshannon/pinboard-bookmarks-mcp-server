@@ -236,6 +236,31 @@ describe('CardShell', () => {
     expect(lastContext().canCallTools()).toBe(false)
   })
 
+  it('tells the card when the bridge connects after a fast-path render, and can call tools by then', async () => {
+    globalThis.openai = { callTool: vi.fn().mockRejectedValue(new Error('not for widgets')), toolOutput: { name: 'fast' } }
+    renderShell()
+    const connected = vi.fn(() => lastContext().canCallTools())
+    lastContext().onConnect(connected)
+
+    let early: unknown
+    await act(async () => {
+      early = await lastContext().callTool('get_link_previews', { urls: [] })
+    })
+    expect(early).toEqual({ reason: 'rejected-before-connect', status: 'unavailable' })
+    expect(connected).not.toHaveBeenCalled()
+
+    connect()
+
+    // Told once, and by then the bridge is the channel.
+    expect(connected).toHaveBeenCalledOnce()
+    expect(connected).toHaveReturnedWith(true)
+    let later: unknown
+    await act(async () => {
+      later = await lastContext().callTool('get_link_previews', { urls: [] })
+    })
+    expect(later).toEqual({ data: { answered: true }, status: 'ok' })
+  })
+
   it('renders window.openai.toolOutput at once, on the ChatGPT fast path', () => {
     globalThis.openai = { toolOutput: { name: 'fast' } }
 

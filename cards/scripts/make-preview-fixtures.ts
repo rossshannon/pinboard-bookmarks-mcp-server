@@ -340,6 +340,11 @@ const scenarios = {
       entry(sixth),
     ],
   },
+  // Two lookups still running when the server had to answer: nothing for
+  // those rows yet, and the server will have it shortly.
+  'pending': {
+    previews: [entry(first), entry(second), blank(third, 'pending'), entry(fourth), blank(fifth, 'pending'), entry(sixth)],
+  },
 }
 
 const fixtures = Object.fromEntries(Object.entries(scenarios).map(([name, structuredContent]) => [name, { structuredContent }]))
