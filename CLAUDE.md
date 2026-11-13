@@ -48,13 +48,13 @@ Based on the PRD (docs/pinboard_mcp_server_prd.md), the system follows this desi
 Tools link to `ui://pinboard/<card>@<hash>` cards (see docs/mcp-apps-ui.md). The card source is the Node project in `cards/`; the server only serves the committed builds in `src/pinboard_mcp_server/ui/generated/`.
 
 - After changing anything in `cards/src/`, run `npm run build` in `cards/` and commit the regenerated HTML: CI's `npm run check` byte-compares it against a fresh build
-- When a tool's return shape changes, update `cards/fixtures/*.json` too; `tests/test_ui.py` fails when they drift
+- When a tool's return shape changes, update `cards/fixtures/*.json` too; `tests/test_ui.py` fails when they drift. The `preview_token` values in `bookmarks.json` are made with `previews.preview_token` under the made-up Pinboard token in `tests/test_ui.py`
 - New tools get `meta=ui.tool_meta(<card>)` on their `@mcp.tool` decorator
 - A tool that exists for a card and not for the model (`get_link_previews`) gets `meta=ui.APP_ONLY_TOOL_META` instead, and a docstring that says it isn't useful to call directly, because hosts without MCP Apps still list it. A card calls it with `context.callTool(name, args)`, which never rejects
-- `get_link_previews` returns a FastMCP `ToolResult` (`structured_content` plus a one-line text block), not a dict, so its images aren't serialised twice. It is the one exception to the "return a dict" rule below
-- `get_link_previews` only looks up URLs the bookmark tools have returned (`main.offered_urls`). A new tool that returns bookmarks must go through `_bookmarks_result` so its URLs are recorded
+- `get_link_previews` returns a FastMCP `ToolResult` (`structured_content`, plus a text block that is the same result as compact JSON without the images), not a dict, so its images aren't serialised twice. It is the one exception to the "return a dict" rule below
+- `get_link_previews` only looks up a URL sent with the `preview_token` a bookmark tool returned for it (an HMAC keyed from `PINBOARD_TOKEN`; see `previews.preview_token`). A new tool that returns bookmarks must go through `_bookmarks_result` so its bookmarks carry tokens. Never log a preview token
 - When `get_link_previews`' return shape changes, update `cards/fixtures/previews.json` through `cards/scripts/make-preview-fixtures.ts` (`npm run fixtures:previews`); `tests/test_previews.py` fails when they drift
-- A card renders images only through `<SafeImage>` (inline raster `data:` URIs) and links only through `<SafeLink>`. Cards fetch nothing from the network
+- A card renders images only through `<SafeImage>` (inline WebP or PNG `data:` URIs) and links only through `<SafeLink>`. Cards fetch nothing from the network
 - Check a visual change with `npm run capture` (screenshots in `cards/tmp/captures/`) and `npm run test:browser`
 
 ## Virtual Environment

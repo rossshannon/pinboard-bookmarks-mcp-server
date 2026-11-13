@@ -155,11 +155,11 @@ The previews come from a pinboard-bridge instance, which fetches each page and r
 
 **This is off by default, and you should know what turning it on does.** To preview a bookmark the server sends its URL to the bridge, along with your Pinboard token to authenticate. That includes the URLs of your private bookmarks whenever they appear in a result. The bridge then requests those pages. Only point this at a bridge you run or trust.
 
-A row always shows the host its link goes to. The page's own name for itself appears beside the host, never in place of it.
+A row always shows the whole host its link goes to. The page's own name for itself appears beside the host, never in place of it, and not at all if it names another site.
 
 If the bridge is slow, rate-limited or down, or the host can't call tools for a card, the card shows the bookmarks without previews. Nothing else changes.
 
-Hosts without MCP Apps support may list `get_link_previews` to the model like any other tool. Its description says it isn't useful to call directly, and it only looks up URLs that a bookmark tool has returned in the current server process, so it can't be used to make the bridge fetch an arbitrary URL with your token.
+Hosts without MCP Apps support may list `get_link_previews` to the model like any other tool. Its description says it isn't useful to call directly. It only looks up a URL that arrives with the token the server issued for that bookmark, so it can't be used to make the bridge fetch an arbitrary URL with your token.
 
 ### Rate Limiting
 
