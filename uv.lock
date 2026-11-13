@@ -1287,11 +1287,12 @@ wheels = [
 
 [[package]]
 name = "pinboard-bookmarks-mcp-server"
-version = "1.0.1"
+version = "1.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "cachetools" },
     { name = "fastmcp" },
+    { name = "httpx2" },
     { name = "pinboard" },
     { name = "pydantic" },
     { name = "python-dateutil" },
@@ -1322,6 +1323,7 @@ requires-dist = [
     { name = "build", marker = "extra == 'dev'", specifier = ">=1.0.0" },
     { name = "cachetools", specifier = ">=5.3.0" },
     { name = "fastmcp", specifier = ">=4.0.0,<5" },
+    { name = "httpx2", specifier = ">=2.13.0" },
     { name = "mcp", marker = "extra == 'mcp'", specifier = ">=1.0.0" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.6.0" },
     { name = "pinboard", specifier = ">=2.0.0" },

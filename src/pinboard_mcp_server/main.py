@@ -7,7 +7,7 @@ from typing import Any
 
 from fastmcp import FastMCP  # type: ignore
 
-from pinboard_mcp_server import ui
+from pinboard_mcp_server import previews, ui
 from pinboard_mcp_server.client import PinboardClient
 
 # Initialize FastMCP server
@@ -20,8 +20,32 @@ mcp: FastMCP = FastMCP("Pinboard MCP Server")
 if ui.ui_enabled():
     ui.register_card_resources(mcp)
 
+# Link previews for the bookmarks card (see previews.py): opt-in, by naming a
+# pinboard-bridge instance in PINBOARD_PREVIEW_BRIDGE_URL, and only with the
+# cards on, because the card is the only thing that asks for them. Read once,
+# at import, like the switch above.
+PREVIEWS_ENABLED = (
+    ui.ui_enabled()
+    and ui.card_available(ui.BOOKMARKS_CARD)
+    and previews.bridge_url() is not None
+)
+
 # Global client - will be initialized in main()
 client: PinboardClient
+
+# The preview bridge's client - initialized in main() when previews are on
+link_previews: previews.LinkPreviews | None = None
+
+
+def _bookmarks_result(result: dict[str, Any]) -> dict[str, Any]:
+    """A bookmark tool's result, telling the card when it may ask for previews.
+
+    The key is added only when true, so with previews off every tool returns
+    exactly what it always has.
+    """
+    if PREVIEWS_ENABLED:
+        result["previews_available"] = True
+    return result
 
 
 @mcp.tool(meta=ui.tool_meta(ui.BOOKMARKS_CARD))
@@ -40,11 +64,13 @@ async def search_bookmarks(query: str, limit: int = 20) -> dict[str, Any]:
 
     bookmarks = await client.search_bookmarks(query=query, limit=limit)
 
-    return {
-        "bookmarks": [bookmark.model_dump() for bookmark in bookmarks],
-        "total": len(bookmarks),
-        "query": query,
-    }
+    return _bookmarks_result(
+        {
+            "bookmarks": [bookmark.model_dump() for bookmark in bookmarks],
+            "total": len(bookmarks),
+            "query": query,
+        }
+    )
 
 
 @mcp.tool(meta=ui.tool_meta(ui.BOOKMARKS_CARD))
@@ -70,12 +96,14 @@ async def search_bookmarks_extended(
         query=query, days_back=days_back, limit=limit
     )
 
-    return {
-        "bookmarks": [bookmark.model_dump() for bookmark in bookmarks],
-        "total": len(bookmarks),
-        "query": query,
-        "days_back": days_back,
-    }
+    return _bookmarks_result(
+        {
+            "bookmarks": [bookmark.model_dump() for bookmark in bookmarks],
+            "total": len(bookmarks),
+            "query": query,
+            "days_back": days_back,
+        }
+    )
 
 
 @mcp.tool(meta=ui.tool_meta(ui.BOOKMARKS_CARD))
@@ -93,11 +121,13 @@ async def list_recent_bookmarks(days: int = 7, limit: int = 20) -> dict[str, Any
 
     bookmarks = await client.get_recent_bookmarks(days=days, limit=limit)
 
-    return {
-        "bookmarks": [bookmark.model_dump() for bookmark in bookmarks],
-        "total": len(bookmarks),
-        "days": days,
-    }
+    return _bookmarks_result(
+        {
+            "bookmarks": [bookmark.model_dump() for bookmark in bookmarks],
+            "total": len(bookmarks),
+            "days": days,
+        }
+    )
 
 
 @mcp.tool(meta=ui.tool_meta(ui.BOOKMARKS_CARD))
@@ -142,13 +172,15 @@ async def list_bookmarks_by_tags(
         tags=tags, from_date=from_dt, to_date=to_dt, limit=limit
     )
 
-    return {
-        "bookmarks": [bookmark.model_dump() for bookmark in bookmarks],
-        "total": len(bookmarks),
-        "tags": tags,
-        "from_date": from_date,
-        "to_date": to_date,
-    }
+    return _bookmarks_result(
+        {
+            "bookmarks": [bookmark.model_dump() for bookmark in bookmarks],
+            "total": len(bookmarks),
+            "tags": tags,
+            "from_date": from_date,
+            "to_date": to_date,
+        }
+    )
 
 
 @mcp.tool(meta=ui.tool_meta(ui.TAGS_CARD))
@@ -159,9 +191,30 @@ async def list_tags() -> list[dict[str, Any]]:
     return [tag.model_dump() for tag in tags]
 
 
+if PREVIEWS_ENABLED:
+
+    @mcp.tool(meta=ui.APP_ONLY_TOOL_META)
+    async def get_link_previews(urls: list[str]) -> dict[str, Any]:
+        """Internal helper for the Pinboard bookmarks result card; not useful to call directly.
+
+        The card calls this itself, after it has rendered, to decorate the
+        bookmarks it shows with a favicon, site name, description and
+        thumbnail. It returns inline image data that is meaningless as text
+        and says nothing about a bookmark that the bookmark tools do not.
+
+        Args:
+            urls: The http(s) URLs to preview (1-8)
+        """
+        unique = previews.requested_urls(urls)
+        if link_previews is None:
+            raise RuntimeError("Link previews are not configured")
+
+        return await link_previews.fetch_many(unique)
+
+
 def main() -> None:
     """Main entry point."""
-    global client
+    global client, link_previews
 
     try:
         # Check for help flag first
@@ -175,6 +228,13 @@ def main() -> None:
             print()
             print("Environment Variables:")
             print("  PINBOARD_TOKEN    Your Pinboard API token (username:token)")
+            print(
+                "  PINBOARD_PREVIEW_BRIDGE_URL"
+                "    Optional pinboard-bridge instance for link previews on result cards"
+            )
+            print(
+                "  PINBOARD_MCP_APPS_UI    Set to false to switch the result cards off"
+            )
             print()
             print("Get your token at: https://pinboard.in/settings/password")
             return
@@ -194,6 +254,11 @@ def main() -> None:
 
         # Initialize Pinboard client
         client = PinboardClient(token)
+
+        # And the preview bridge's, when the card may ask for previews
+        bridge = previews.bridge_url()
+        if PREVIEWS_ENABLED and bridge is not None:
+            link_previews = previews.LinkPreviews(bridge, token)
 
         # Run the server
         mcp.run()
