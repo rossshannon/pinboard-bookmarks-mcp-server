@@ -32,7 +32,9 @@
  * arriving late. (Only on content: the skeleton fills the viewport, and
  * watching it would chase the frame's own height.) And the shell adopts
  * the host's theme and style variables (`host-theme.ts`) rather than holding a
- * brand palette apart from them.
+ * brand palette apart from them. A card can also call a server tool of its
+ * own accord (`tool-caller.ts`), which the bookmarks card does for its link
+ * previews; the render context carries `callTool` for that.
  */
 
 import type { App, McpUiAppCapabilities } from '@modelcontextprotocol/ext-apps'
@@ -43,6 +45,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 
 import type { BreadcrumbLog } from './breadcrumbs.ts'
 import type { LinkOpener } from './link-opener.ts'
+import type { ToolCaller, ToolCallingApp } from './tool-caller.ts'
 import type { CardResultError, CardToolResultLike } from './use-card-result.ts'
 
 import './card.css'
@@ -51,12 +54,14 @@ import { applyHostLook } from './host-theme.ts'
 import { createLinkOpener } from './link-opener.ts'
 import { Card } from './primitives.tsx'
 import { createSizeReporter, measureDocument, prefersReducedMotion } from './sizing.ts'
+import { createToolCaller } from './tool-caller.ts'
 import { useCardResult } from './use-card-result.ts'
 
 // ChatGPT exposes the tool output synchronously on `window.openai` instead of
 // (or ahead of) the MCP Apps postMessage handshake.
 declare global {
   var openai: {
+    readonly callTool?: (name: string, toolArguments: Record<string, unknown>) => Promise<unknown>
     readonly openExternal?: (params: { href: string }) => void
     readonly toolOutput?: Record<string, unknown>
   } | undefined
@@ -147,7 +152,7 @@ export const wireCardApp = (app: App, callbacks: CardWiringCallbacks): void => {
 const describeError = (error: Error): string => error.message
 
 /** What a card needs beyond its data. */
-export interface CardRenderContext {
+export interface CardRenderContext extends ToolCaller {
   /** Opens a link through the host; SafeLink's only route out of the sandbox. */
   readonly links: LinkOpener
   readonly breadcrumbs: BreadcrumbLog
@@ -256,6 +261,13 @@ export const CardShell = ({ appName, children, skeleton, title }: CardShellPrope
     breadcrumbs,
   ))
 
+  // The SDK's `App` is a superset of what a tool call needs; the cast narrows
+  // its result type (a union of content blocks) to the shape the reader takes.
+  const [tools] = useState(() => createToolCaller(
+    () => (isConnectedReference.current ? appReference.current as unknown as ToolCallingApp : null),
+    breadcrumbs,
+  ))
+
   const remeasure = useCallback(() => {
     sizeReporter.onRender()
   }, [sizeReporter])
@@ -276,7 +288,8 @@ export const CardShell = ({ appName, children, skeleton, title }: CardShellPrope
     breadcrumbs.record('connect:resolved', applyHostLook(app))
     sizeReporter.flushOnConnect()
     links.flush()
-  }, [app, breadcrumbs, isConnected, links, sizeReporter])
+    tools.flush()
+  }, [app, breadcrumbs, isConnected, links, sizeReporter, tools])
 
   useEffect(() => {
     if (!error) return
@@ -396,7 +409,14 @@ export const CardShell = ({ appName, children, skeleton, title }: CardShellPrope
   }, [data, isConnected, resultError, sizeReporter, statePhase])
 
   if (data !== undefined || resultError !== undefined) {
-    const content = children(data ?? NO_DATA, { breadcrumbs, error: resultError, links, remeasure })
+    const content = children(data ?? NO_DATA, {
+      breadcrumbs,
+      callTool: tools.callTool,
+      canCallTools: tools.canCallTools,
+      error: resultError,
+      links,
+      remeasure,
+    })
 
     const fadingIn = skeleton !== undefined && generation === 1 && !crossfadeDone && !prefersReducedMotion()
     if (fadingIn) {

@@ -20,6 +20,8 @@ import { SIZE_SETTLE_DELAY_MS } from './sizing.ts'
 
 interface FakeApp {
   addEventListener: (event: string, handler: (parameters: unknown) => void) => void
+  callServerTool: ReturnType<typeof vi.fn>
+  getHostCapabilities: () => { serverTools?: object } | undefined
   getHostContext: () => McpUiHostContext | undefined
   onerror?: (error: Error) => void
   onteardown?: () => unknown
@@ -97,6 +99,8 @@ beforeEach(() => {
       if (event === 'toolresult') toolResultHandler = handler
       if (event === 'hostcontextchanged') hostContextChangedHandler = handler
     },
+    callServerTool: vi.fn().mockResolvedValue({ content: [], structuredContent: { answered: true } }),
+    getHostCapabilities: () => ({ serverTools: {} }),
     getHostContext: () => hostContext,
     openLink: vi.fn().mockResolvedValue({}),
     sendSizeChanged: vi.fn<(size: CardSize) => Promise<void>>().mockResolvedValue(),
@@ -170,6 +174,66 @@ describe('CardShell', () => {
 
     expect(openExternal).toHaveBeenCalledExactlyOnceWith({ href: 'https://pinboard.in/' })
     expect(fakeApp.openLink).not.toHaveBeenCalled()
+  })
+
+  it('calls a server tool for the card through the bridge once connected', async () => {
+    renderShell()
+    connect()
+    deliver({ structuredContent: { name: 'Dana' } })
+
+    expect(lastContext().canCallTools()).toBe(true)
+    let outcome: unknown
+    await act(async () => {
+      outcome = await lastContext().callTool('get_link_previews', { urls: ['https://pinboard.in/'] })
+    })
+
+    expect(outcome).toEqual({ data: { answered: true }, status: 'ok' })
+    expect(fakeApp.callServerTool).toHaveBeenCalledExactlyOnceWith(
+      { arguments: { urls: ['https://pinboard.in/'] }, name: 'get_link_previews' },
+      expect.objectContaining({ timeout: 15_000 }),
+    )
+  })
+
+  it('holds a tool call made before the handshake and sends it once connected', async () => {
+    renderShell()
+    deliver({ structuredContent: { name: 'early' } })
+
+    let outcome: unknown
+    const pending = lastContext().callTool('get_link_previews', { urls: [] }).then((result) => {
+      outcome = result
+    })
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(100)
+    })
+    expect(fakeApp.callServerTool).not.toHaveBeenCalled()
+
+    connect()
+    await act(async () => {
+      await pending
+    })
+    expect(outcome).toEqual({ data: { answered: true }, status: 'ok' })
+  })
+
+  it('tells the card it cannot call tools on a host that does not proxy them', async () => {
+    fakeApp.getHostCapabilities = () => ({})
+    renderShell()
+    connect()
+    deliver({ structuredContent: { name: 'Dana' } })
+
+    expect(lastContext().canCallTools()).toBe(false)
+    let outcome: unknown
+    await act(async () => {
+      outcome = await lastContext().callTool('get_link_previews', { urls: [] })
+    })
+    expect(outcome).toEqual({ reason: 'no-capability', status: 'unavailable' })
+    expect(fakeApp.callServerTool).not.toHaveBeenCalled()
+  })
+
+  it('cannot call tools on the ChatGPT fast path when that host offers no callTool', () => {
+    globalThis.openai = { toolOutput: { name: 'fast' } }
+    renderShell()
+
+    expect(lastContext().canCallTools()).toBe(false)
   })
 
   it('renders window.openai.toolOutput at once, on the ChatGPT fast path', () => {

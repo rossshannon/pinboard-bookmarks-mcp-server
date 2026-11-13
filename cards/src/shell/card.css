@@ -197,12 +197,18 @@ ul {
 .bookmarks {
   display: flex;
   flex-direction: column;
+  /* The thumbnail is sized from the list's own width, not the viewport's. */
+  container-type: inline-size;
 }
 
+/* A row is a link card: the text in one column and, when the page has a
+   picture, a thumbnail at the trailing edge. The second column is `auto`, so
+   a row with no thumbnail gives the text the whole width. */
 .bookmark {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  column-gap: var(--pb-gap);
   padding-block: 12px;
   border-block-start: 1px solid var(--pb-border);
   min-inline-size: 0;
@@ -211,6 +217,65 @@ ul {
 .bookmark:first-child {
   border-block-start: 0;
   padding-block-start: 4px;
+}
+
+.bookmark__body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-inline-size: 0;
+}
+
+/* Where it lives and when it was saved, above the title as a link card has
+   it: favicon, site, date. */
+.bookmark__source {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--pb-text-faint);
+  font-size: var(--pb-text-sm);
+  line-height: var(--pb-text-sm-lh);
+  min-inline-size: 0;
+}
+
+.bookmark__site {
+  min-inline-size: 0;
+  overflow: hidden;
+  color: var(--pb-text-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bookmark__source time {
+  flex: none;
+  white-space: nowrap;
+}
+
+.bookmark__site + time::before {
+  content: "·";
+  margin-inline-end: 6px;
+}
+
+/* A site's favicon, or the tile that stands in for one: the same box either
+   way, so a favicon arriving moves nothing. */
+.favicon {
+  flex: none;
+  inline-size: 16px;
+  block-size: 16px;
+  border-radius: 4px;
+  object-fit: cover;
+}
+
+.favicon--letter {
+  display: grid;
+  place-items: center;
+  background: var(--pb-surface-raised);
+  box-shadow: inset 0 0 0 1px var(--pb-border);
+  color: var(--pb-text-muted);
+  font-size: 0.625rem;
+  font-weight: var(--pb-weight-semibold);
+  line-height: 1;
+  text-transform: uppercase;
 }
 
 .bookmark__title {
@@ -230,23 +295,31 @@ ul {
   }
 }
 
-.bookmark__meta {
-  display: flex;
-  flex-wrap: wrap;
-  column-gap: 6px;
-  color: var(--pb-text-faint);
-  font-size: var(--pb-text-sm);
-  line-height: var(--pb-text-sm-lh);
-  min-inline-size: 0;
+/* The page's picture, cropped to one fixed shape whatever shape it came in.
+   Sized from the list's width: about a fifth of it, between a phone's
+   thumbnail and a transcript column's, with no breakpoint in between. */
+.bookmark__thumb {
+  inline-size: clamp(72px, 21cqi, 120px);
+  aspect-ratio: 4 / 3;
+  margin-block-start: 2px;
+  overflow: hidden;
+  border-radius: var(--pb-radius-sm);
+  background: var(--pb-surface-raised);
+  box-shadow: inset 0 0 0 1px var(--pb-border);
 }
 
-.bookmark__host {
-  overflow-wrap: anywhere;
+.bookmark__thumb img {
+  display: block;
+  inline-size: 100%;
+  block-size: 100%;
+  object-fit: cover;
 }
 
-.bookmark__meta > * + *::before {
-  content: "·";
-  margin-inline-end: 6px;
+/* Held while the preview is on its way. Paint only, like every skeleton. */
+.bookmark__thumb--pending {
+  background: var(--pb-skeleton);
+  box-shadow: none;
+  animation: skeleton-pulse 1.4s ease-in-out infinite;
 }
 
 .bookmark__notes {
@@ -506,6 +579,7 @@ ul {
 @media (prefers-reduced-motion: reduce) {
   .skeleton,
   .skeleton-group,
+  .bookmark__thumb--pending,
   .overlay {
     animation: none;
   }

@@ -78,6 +78,21 @@ def _assert_types_within(
         )
 
 
+#: The one key a bookmark tool adds when link previews are configured (see
+#: ``previews.py``), and only then. These tests run with previews off, so the
+#: real outputs never carry it; a fixture may, with the one value it can have.
+PREVIEWS_FLAG = "previews_available"
+
+
+def _without_previews_flag(content: dict[str, Any], scenario: str) -> dict[str, Any]:
+    """``content`` less the previews flag, having checked the flag is ``True`` if there."""
+    if PREVIEWS_FLAG in content:
+        assert content[PREVIEWS_FLAG] is True, (
+            f"{scenario}: {PREVIEWS_FLAG} is only ever sent as true"
+        )
+    return {key: value for key, value in content.items() if key != PREVIEWS_FLAG}
+
+
 def _fixtures(card: str) -> dict[str, Any]:
     return json.loads((FIXTURES / f"{card}.json").read_text(encoding="utf-8"))
 
@@ -294,7 +309,7 @@ class TestFixtureContract:
         for scenario, result in _fixtures("bookmarks").items():
             if result.get("isError"):
                 continue
-            content = result["structuredContent"]
+            content = _without_previews_flag(result["structuredContent"], scenario)
             assert frozenset(content) in real_shapes, scenario
             for bookmark in content["bookmarks"]:
                 assert set(bookmark) == real_bookmark_keys, scenario
@@ -312,10 +327,21 @@ class TestFixtureContract:
         for scenario, result in _fixtures("bookmarks").items():
             if result.get("isError"):
                 continue
-            content = result["structuredContent"]
+            content = _without_previews_flag(result["structuredContent"], scenario)
             _assert_types_within(content, top_level, scenario)
             for bookmark in content["bookmarks"]:
                 _assert_types_within(bookmark, rows, scenario)
+
+    def test_some_bookmark_fixture_offers_previews_and_most_do_not(self):
+        # Both states of the flag have to be in front of the cards' suites.
+        offered = [
+            scenario
+            for scenario, result in _fixtures("bookmarks").items()
+            if result.get("structuredContent", {}).get(PREVIEWS_FLAG) is True
+        ]
+
+        assert offered
+        assert len(offered) < len(_fixtures("bookmarks")) - len(offered)
 
     async def test_tag_fixtures_have_list_tags_shape(self, mcp_client):
         outputs = await self._real_outputs(mcp_client)
