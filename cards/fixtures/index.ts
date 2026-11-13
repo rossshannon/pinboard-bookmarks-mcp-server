@@ -48,12 +48,41 @@ export type PreviewScenario = 'busy' | 'hostile' | 'mixed' | 'ok' | 'pending' | 
  * with, beside the plain render on a host that cannot call tools at all.
  */
 export const PREVIEW_RUNS: Readonly<Record<string, readonly PreviewScenario[]>> = {
+  'deceptive-host': ['ok'],
   'rich': ['ok', 'mixed', 'hostile', 'rate-limited', 'busy', 'pending'],
   'rich-many': ['ok'],
 }
 
 /** One preview fixture's `structuredContent`. */
 export const previewData = (scenario: PreviewScenario): Record<string, unknown> => PREVIEW_FIXTURES[scenario].structuredContent ?? {}
+
+/** One bookmark as the card hands it back to `get_link_previews`. */
+export interface PreviewRequestItem {
+  readonly token?: unknown
+  readonly url?: unknown
+}
+
+/** The token each bookmark fixture row was given, by URL: what the server would accept back. */
+const FIXTURE_TOKENS: ReadonlyMap<string, string> = new Map(
+  Object.values(CARD_FIXTURES.bookmarks).flatMap((result) => {
+    const rows = (result.structuredContent?.['bookmarks'] ?? []) as ReadonlyArray<{ readonly preview_token?: unknown, readonly url?: unknown }>
+    return rows.flatMap(row => typeof row.url === 'string' && typeof row.preview_token === 'string' ? [[row.url, row.preview_token] as const] : [])
+  }),
+)
+
+/** The items of a request that carry the token their URL was sent with, as URLs: the ones the server would look up. */
+export const verifiedUrls = (items: readonly PreviewRequestItem[]): string[] =>
+  items.flatMap(item => typeof item.url === 'string' && item.token === FIXTURE_TOKENS.get(item.url) ? [item.url] : [])
+
+/** The fixture's own items for these URLs, as a card would send them. */
+export const previewItems = (urls: readonly string[]): Array<{ token: string, url: string }> =>
+  urls.map(url => ({ token: FIXTURE_TOKENS.get(url) ?? '', url }))
+
+/** The text block the server sends beside a result: the same result as compact JSON, without the images. */
+export const previewText = (structuredContent: Record<string, unknown>): string => {
+  const entries = (structuredContent['previews'] ?? []) as ReadonlyArray<Record<string, unknown>>
+  return JSON.stringify({ ...structuredContent, previews: entries.map(entry => ({ ...entry, favicon: null, image: null })) })
+}
 
 /**
  * What the tool would answer for exactly these URLs, from a fixture: its

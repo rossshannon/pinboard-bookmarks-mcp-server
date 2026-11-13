@@ -165,20 +165,105 @@ describe('createToolCaller', () => {
       expect(labels(breadcrumbs)).toContain('callTool:openai')
     })
 
-    it('says so apart when ChatGPT’s callTool rejects: the bridge has not been tried', async () => {
+    it('waits for the bridge when ChatGPT’s callTool rejects, and says which it was if none comes', async () => {
       globalThis.openai = { callTool: vi.fn().mockRejectedValue(new Error('denied')) }
       const breadcrumbs = createBreadcrumbLog()
       const tools = createToolCaller(() => null, breadcrumbs)
 
-      expect(await tools.callTool('t', {})).toEqual({ reason: 'rejected-before-connect', status: 'unavailable' })
-      expect(labels(breadcrumbs)).toContain('callTool:error')
+      const pending = tools.callTool('t', {})
+      await vi.advanceTimersByTimeAsync(TOOL_CALL_TIMEOUT_MS - 1)
+      expect(labels(breadcrumbs)).toEqual(['callTool:requested', 'callTool:openai', 'callTool:error', 'callTool:held'])
+      await vi.advanceTimersByTimeAsync(1)
+
+      expect(await pending).toEqual({ reason: 'rejected-before-connect', status: 'unavailable' })
     })
 
     it.each([undefined, 'done', {}, { content: [] }])('takes an answer it cannot read from ChatGPT’s callTool (%j) the same way', async (answer) => {
       globalThis.openai = { callTool: vi.fn().mockResolvedValue(answer) }
       const tools = createToolCaller(() => null, createBreadcrumbLog())
 
-      expect(await tools.callTool('t', {})).toEqual({ reason: 'rejected-before-connect', status: 'unavailable' })
+      const pending = tools.callTool('t', {})
+      await vi.advanceTimersByTimeAsync(TOOL_CALL_TIMEOUT_MS)
+
+      expect(await pending).toEqual({ reason: 'rejected-before-connect', status: 'unavailable' })
+    })
+
+    it('falls through to the bridge when ChatGPT’s callTool rejects and the bridge then connects', async () => {
+      let connected: ToolCallingApp | null = null
+      const viaOpenAi = vi.fn().mockRejectedValue(new Error('denied'))
+      globalThis.openai = { callTool: viaOpenAi }
+      const callServerTool = vi.fn<ToolCallingApp['callServerTool']>().mockResolvedValue({ structuredContent: { from: 'bridge' } })
+      const tools = createToolCaller(() => connected, createBreadcrumbLog())
+
+      const pending = tools.callTool('t', { a: 1 })
+      await vi.advanceTimersByTimeAsync(200)
+      expect(callServerTool).not.toHaveBeenCalled()
+      connected = appThat(callServerTool)
+      tools.flush()
+
+      expect(await pending).toEqual({ data: { from: 'bridge' }, status: 'ok' })
+      expect(viaOpenAi).toHaveBeenCalledOnce()
+      expect(callServerTool).toHaveBeenCalledExactlyOnceWith({ arguments: { a: 1 }, name: 't' }, { timeout: TOOL_CALL_TIMEOUT_MS })
+    })
+
+    it('falls through at once when the bridge connected while ChatGPT’s callTool was still in flight', async () => {
+      // The usual order on ChatGPT: the early call goes out, the handshake
+      // finishes, and only then does the early call come back refused.
+      let connected: ToolCallingApp | null = null
+      let refuse: (error: Error) => void = () => undefined
+      globalThis.openai = {
+        callTool: vi.fn(() => new Promise((_resolve, reject) => {
+          refuse = reject
+        })),
+      }
+      const callServerTool = vi.fn<ToolCallingApp['callServerTool']>().mockResolvedValue({ structuredContent: { from: 'bridge' } })
+      const breadcrumbs = createBreadcrumbLog()
+      const tools = createToolCaller(() => connected, breadcrumbs)
+
+      const pending = tools.callTool('t', {})
+      await vi.advanceTimersByTimeAsync(50)
+      connected = appThat(callServerTool)
+      tools.flush()
+      refuse(new Error('denied'))
+
+      expect(await pending).toEqual({ data: { from: 'bridge' }, status: 'ok' })
+      // Never parked: the bridge was already there when the early call failed.
+      expect(labels(breadcrumbs)).not.toContain('callTool:held')
+    })
+
+    it('does not send a parked call whose time ran out before the bridge connected', async () => {
+      let connected: ToolCallingApp | null = null
+      const callServerTool = vi.fn<ToolCallingApp['callServerTool']>().mockResolvedValue({ structuredContent: { late: true } })
+      const tools = createToolCaller(() => connected, createBreadcrumbLog(), 100)
+
+      const first = tools.callTool('t', { attempt: 1 })
+      await vi.advanceTimersByTimeAsync(100)
+      expect(await first).toEqual({ reason: 'not-connected', status: 'unavailable' })
+
+      // The bridge arrives late. The card has been told, and asks again itself.
+      connected = appThat(callServerTool)
+      tools.flush()
+      await vi.advanceTimersByTimeAsync(0)
+      expect(callServerTool).not.toHaveBeenCalled()
+
+      expect(await tools.callTool('t', { attempt: 2 })).toEqual({ data: { late: true }, status: 'ok' })
+      expect(callServerTool).toHaveBeenCalledExactlyOnceWith({ arguments: { attempt: 2 }, name: 't' }, { timeout: 100 })
+    })
+
+    it('does not send a call parked after an early refusal once its time has run out either', async () => {
+      let connected: ToolCallingApp | null = null
+      globalThis.openai = { callTool: vi.fn().mockRejectedValue(new Error('denied')) }
+      const callServerTool = vi.fn<ToolCallingApp['callServerTool']>().mockResolvedValue({ structuredContent: {} })
+      const tools = createToolCaller(() => connected, createBreadcrumbLog(), 100)
+
+      const first = tools.callTool('t', {})
+      await vi.advanceTimersByTimeAsync(100)
+      expect(await first).toEqual({ reason: 'rejected-before-connect', status: 'unavailable' })
+      connected = appThat(callServerTool)
+      tools.flush()
+      await vi.advanceTimersByTimeAsync(0)
+
+      expect(callServerTool).not.toHaveBeenCalled()
     })
 
     it('still takes a tool’s own failure through ChatGPT’s callTool as final', async () => {

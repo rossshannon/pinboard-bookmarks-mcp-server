@@ -21,9 +21,9 @@
  */
 export const NEAR_VIEWPORT_MARGIN = '300px 0px'
 
-export interface RowWatcher {
-  /** Report `url` once `element` nears the viewport; returns the way to stop watching. */
-  readonly watch: (element: Element, url: string) => () => void
+export interface RowWatcher<Row> {
+  /** Report `row` once `element` nears the viewport; returns the way to stop watching. */
+  readonly watch: (element: Element, row: Row) => () => void
   readonly dispose: () => void
 }
 
@@ -32,8 +32,8 @@ const precedes = (first: Element, second: Element): number =>
   (first.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING) === 0 ? 1 : -1
 
 /** `onNear` gets each callback's rows as one list, in document order. */
-export const createRowWatcher = (onNear: (urls: readonly string[]) => void): RowWatcher => {
-  const watched = new Map<Element, string>()
+export const createRowWatcher = <Row>(onNear: (rows: readonly Row[]) => void): RowWatcher<Row> => {
+  const watched = new Map<Element, Row>()
   let observer: IntersectionObserver | undefined
 
   const report = (entries: readonly IntersectionObserverEntry[]): void => {
@@ -43,14 +43,14 @@ export const createRowWatcher = (onNear: (urls: readonly string[]) => void): Row
       near.push(entry.target)
     }
     if (near.length === 0) return
-    const urls: string[] = []
+    const rows: Row[] = []
     for (const element of near.toSorted(precedes)) {
-      const url = watched.get(element)
+      const row = watched.get(element)
       watched.delete(element)
       observer?.unobserve(element)
-      if (url !== undefined) urls.push(url)
+      if (row !== undefined) rows.push(row)
     }
-    onNear(urls)
+    onNear(rows)
   }
 
   return {
@@ -59,13 +59,13 @@ export const createRowWatcher = (onNear: (urls: readonly string[]) => void): Row
       observer = undefined
       watched.clear()
     },
-    watch: (element, url) => {
+    watch: (element, row) => {
       if (typeof IntersectionObserver !== 'function') {
-        onNear([url])
+        onNear([row])
         return () => undefined
       }
       observer ??= new IntersectionObserver(report, { rootMargin: NEAR_VIEWPORT_MARGIN })
-      watched.set(element, url)
+      watched.set(element, row)
       observer.observe(element)
       return () => {
         if (!watched.delete(element)) return

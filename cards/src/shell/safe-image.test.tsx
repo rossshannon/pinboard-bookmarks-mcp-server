@@ -6,14 +6,34 @@ import { SafeImage } from './safe-image.tsx'
 
 const PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=='
 
+/** The header of a 240 by 126 WebP: all a guard that reads no further needs. */
+const WEBP = 'data:image/webp;base64,UklGRhYAAABXRUJQVlA4WAoAAAAAAAAA7wAAfQAA'
+
+/** A PNG's signature and nothing after it, with each amount of padding. */
+const PNG_START = 'iVBORw0KGgo'
+
 describe('isImageDataUri', () => {
-  it.each(['webp', 'png', 'jpeg'])('takes a base64 %s', (format) => {
-    expect(isImageDataUri(`data:image/${format};base64,AAAA`)).toBe(true)
+  it('takes a base64 PNG or WebP that starts as one', () => {
+    expect(isImageDataUri(PNG)).toBe(true)
+    expect(isImageDataUri(WEBP)).toBe(true)
   })
 
   it('takes base64 padding', () => {
-    expect(isImageDataUri('data:image/png;base64,AAA=')).toBe(true)
-    expect(isImageDataUri('data:image/png;base64,AA==')).toBe(true)
+    expect(isImageDataUri(`data:image/png;base64,${PNG_START}A`)).toBe(true)
+    expect(isImageDataUri(`data:image/png;base64,${PNG_START}AAA=`)).toBe(true)
+    expect(isImageDataUri(`data:image/png;base64,${PNG_START}AA==`)).toBe(true)
+  })
+
+  it.each([
+    ['a JPEG, which the bridge never sends', 'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/'],
+    ['a PNG labelled as a WebP', PNG.replace('image/png', 'image/webp')],
+    ['a WebP labelled as a PNG', WEBP.replace('image/webp', 'image/png')],
+    ['a JPEG labelled as a PNG', 'data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/'],
+    ['a RIFF file that is not a WebP', 'data:image/webp;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEA'],
+    ['bytes that are no image at all', 'data:image/png;base64,AAAA'],
+    ['too few bytes to tell', 'data:image/webp;base64,UklGR'],
+  ])('refuses %s', (_name, value) => {
+    expect(isImageDataUri(value)).toBe(false)
   })
 
   it.each([
@@ -46,7 +66,7 @@ describe('isImageDataUri', () => {
   })
 
   it('refuses a URI past the size ceiling', () => {
-    const prefix = 'data:image/png;base64,'
+    const prefix = `data:image/png;base64,${PNG_START}`
     expect(isImageDataUri(prefix + 'A'.repeat(MAX_IMAGE_DATA_URI_LENGTH - prefix.length))).toBe(true)
     expect(isImageDataUri(prefix + 'A'.repeat(MAX_IMAGE_DATA_URI_LENGTH - prefix.length + 1))).toBe(false)
   })

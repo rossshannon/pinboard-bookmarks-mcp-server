@@ -17,6 +17,38 @@
           "url": "http://www.paulgraham.com/hwh.html"
         },
         {
+          "description": "Sign in to continue to your account.",
+          "favicon": {
+            "data_uri": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAADqklEQVR4AcRWW0gUURj+ZjLTLDWl20qk3c02KCsreikp0RAihCBKJYvceqikwnqQNHwSIYpQKfBB6yG6UOClwLULSijWeknELO+Vtl7ykrfc6fxHZ1yV1Rl0ddj/nH/O+c/3fTPn/8+sCKvLOzLf3c9gjN9mML7WR+e16A1GaVaMYREmYROHFSUUAXpDXvBSZ8sXNhAnAEcgCCusA2fkMyzCJGziIC4Zj40BftHGIEDIZqaD3S+BcQjZsghRb/iwjKlLtzvvZIKHW6MKPUQLBiMEAasnz9t7RNAJjn3hogBhr72pbOETN8sBad4EANJeegNrbSm09zh7A2vZG9BO47/BDYajPkg+tw2Prvsj/coOXAz1gZuLg2YwTQKcFy1AYoQv0mN2MgHeOLxjOfTervDf6I7zwd7Iit+HY/u05bOoVvISpwXIvOqP0IBVNpe4LnbArVNbsN/Xw2bMxAnVAm6c2ISNXi58vUUCUrLqcPx2EQ7FFiA2vRKVDd18jiUVroVt4L6aRpUAnYcTgnevVPCSn9cwAbWo+dkLc9cgsotbcOF+KXr6h3nM+tUuCNi8jPvTNaoEHPDzhAM9GkNrMvfjcX4T88b/2ruHEH3PhEtp5dya2/rGB9i4UyXAZ9ViZXllQxeGaQ+UkTGnrLYL+aVmbiR0bMa2p0oAZb8M8atjQHZ5Hx64BlSKEy0qSN3xokrAwJCFk1HjwqqBetl0nk68FKkcrc2LjcsxU/WqBLR1jT21l6fzOLzi6k5kGBu5fazqUOZ6RxNSGbDhqBJQWNmuLN+1yR3rrHIiz/QbSU9ruLV09Ctx9a1/FX8qR5WAivpufG3u5ThUDQmnfeGxdCG/lxs6nuVSpS17W2aWp6bsVQkghAe5ddRx2+7jiic39/BvQdzJzTwJ6Xh2dBiBy2RbYmbnAw+ephlZMU0QTeeWtCLpWQ3+jZbgCjdH/i0IO6ADJR/FkBWw7br76ju5qky1AELLyGtEeFIJPn/7g36ryqBzobq5hwukE1FiRzXFqzFNAgiQ8iEi+RMCLr/j34Kzd0zYH/MeYYnFIIFayAlPswBaREZE9C0oqu5A3+DYOUFzWkyUJKlFy4LZjCVu9gYE02yCasMSTKIgSPMmgLjFIUlMBdCJub86iVusSj1Yx/bizJzzWxBJ3CwHgIrUwBfsP3oIsx/2FyIxDimkPO3QS+LiAsgpTwnM6e4T/VhBJUjAG0hSK43P1Ph6hkWYhE0c5SmBOXwcwH8AAAD///p5HvgAAAAGSURBVAMAa99p+NvJw6EAAAAASUVORK5CYII=",
+            "height": 32,
+            "width": 32
+          },
+          "image": {
+            "data_uri": "data:image/webp;base64,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",
+            "height": 168,
+            "width": 320
+          },
+          "site_name": "Account security",
+          "status": "ok",
+          "theme_color": null,
+          "title": "Sign in",
+          "url": "https://accounts.google.com.security-check.evil.example/signin?continue=mail"
+        },
+        {
+          "description": "Confirm your details to restore access.",
+          "favicon": {
+            "data_uri": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAACjUlEQVR4AeyWTUhUURTH//daYR9iWcyQabYYFzVOHxIRQwQm9DFSzRStLLPatDOisFWQFFSr3LUoI6ptoxvLYGYWlosBYeJVBGaUkTBDRB+Ykji3e56+5wuUd99znm68cOadufe8/+8/5955PA7L2BRNrQ7GktdqosmeUCyRDcWSojCRyJImaRPDgoRpIBRNHCpB/q2cuMoY9gPMh4IN5iNN0iYGsQxpOQcEjyYPgLFuGeXGgmdXxsolp9swwUMNvWsYxwPPgLML39tyoq+M55f+Pc2A9bPXebQiO8HGR5s4A9vtEcJWltgcTCyYAWJTB6psrXpUIDtQxVW1K/zLcflMYMa41BzAwT0+ebjheCgb8K9dhlOHK2eMpiOVuH0xiCe3dqJ01RJHJpQNqKjWBErQcb0WRXJjVeqpxpWBgaERbD2W0iPWkkZHfIi09KjeuBKRvX49V/lwZcAqPPhlBHceDaLnVc6cDm8vM3O7ZM4GDMAHacTInZyDghkIb5v+1V9zY4YX26srAyuKi1C3a50ejQ0VeHijFjs2l5qw5y+zZm6XuDKwwVeM9ishPVrPVf8Hv//0M/rf/bTjmuuuDJh3TyUTeQFt4Bdabmpof/xxalbt4soA7THBKM63vUb4ZC8aW/uRSn9To1qqXBn4MzahwwjYl/mOUfndoukodWXAEcGmeNGAcgfor2U8/49fSNs0Vn1Z2YC6pLNKLoRQf2w507atJrbsAMvYVnpWwDKcMbFgBojNxwW/C4EfmO8hmcTm7zvrPsm9ODvffDA0E1ueAeBNV30cQkRkDHtuRIhhyYlo8X1dxNINUKJ11j/7DR7MA21C4AUgpt+xqMBlTN4mcqRJ2sTQJGtyHvgHAAD//5hUR+8AAAAGSURBVAMAxoz0ienfJ20AAAAASUVORK5CYII=",
+            "height": 32,
+            "width": 32
+          },
+          "image": null,
+          "site_name": "paypal.com – Secure login",
+          "status": "ok",
+          "theme_color": null,
+          "title": "Log in",
+          "url": "https://paypal.com.account-verify.example/login"
+        },
+        {
           "description": "An interactive article explaining the workings of a mechanical watch movement, from the mainspring to the escapement.",
           "favicon": {
             "data_uri": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAC9klEQVR4AcSXXUgUURiG33P8LTH/KtE0Je1mbUsqyC4qTCoy81ovMgm6ztK1bgyKykCD9Cqin4uu8kbEUArcjQQjUpDMiswyw1D7IRELNfd0vhOOs+sue5jd1WHO7He+OfM+786Z78wuh2nLrnIl5jmcl7Y5nI/tNV0TdodThKRJLdIkbWKYkDAM2Ku7jsZHuQdl4iIDDoOxjeaBQcVSizRJmxjEWtSTOSCv2nkEnHUALB1h3yRDshZNcPuF7iTGcD/sXG8Axx3b2Z5k7v47d1IaSPM+H/4+S2cRfyo4Y6wg/DDfBGJzCLFqBohNdyDLt7/wZ+UdyFJVoIPKSFkDx/HcZa2mJBeVBzaj0LZeVq6OkucYbQOp66JxYl/mslaxPxPnjuWgqdKOR7UFyM9O8CQE6GkbCKCjTmfKu1RfbkNMpL6s/kiF+H8YGp/B9lqXaoeu9uBmxzAW3EKd3JQUi11bElWsc7BkwCw8MTWLe09H8fLjLyOdlhhrxIGCoA0QgMmFPkN+c4rpTrwanaJQq1kykBIfDXNF3D6dD6oSmoX6tiHQFGnR5SBLBpLjojyqYU9uEmZmF9DcOYz2vnEpq79bMvBzZh4Pur+o1vJ8DG/GphEXE4Gq4hw8PLMbqQkx2g4sGfgxPYeG9g+qXWl9j7KmXtx1fVbQ7A1r1fSojsbBkgFfuq7B70Z6R5b+YhQyA7aMeMMAPYxGJ0BgyYB3FVwrs+F86VYD1WdaE4ykn8CSAe8qKNmZigguFwMJoWpoktUgQ63dkgFvZYKOfPuNtt5xlDf3glZH7zH++toG+j5NqbV/8R1g/txb9wylDS9Q1/IWZMQfzFde24Cvi0OR4wJiIhRCVjSILX8Tsn4rF4fkGsH65bMrVs0Ag+jn85H8FgSWXuZYoU0yic3fXS8ckXNxaoWwZkwlsVUVvG4saoVbFAPiq3lEeGLJkKyBxoNtpK8MUDBwo6hzep7nuYHLAngi/zRMUj7Ypq4XYpI0SZsYxFJ5AP8AAAD//6AbWGQAAAAGSURBVAMAjuUlONQ80FQAAAAASUVORK5CYII=",

@@ -38,6 +38,22 @@ const SITES: Readonly<Record<string, Site>> = {
     favicon: { hue: 30, letter: 'P' },
     title: 'How to Work Hard',
   },
+  // Two pages that would like to be taken for somewhere else (the
+  // `deceptive-host` bookmarks): one with an innocent-sounding name for
+  // itself, one that names another site outright.
+  'https://accounts.google.com.security-check.evil.example/signin?continue=mail': {
+    description: 'Sign in to continue to your account.',
+    favicon: { hue: 215, letter: 'G' },
+    image: { hue: 215, shape: 'wide' },
+    siteName: 'Account security',
+    title: 'Sign in',
+  },
+  'https://paypal.com.account-verify.example/login': {
+    description: 'Confirm your details to restore access.',
+    favicon: { hue: 225, letter: 'P' },
+    siteName: 'paypal.com – Secure login',
+    title: 'Log in',
+  },
   'https://ciechanow.ski/mechanical-watch/': {
     description: 'An interactive article explaining the workings of a mechanical watch movement, from the mainspring to the escapement.',
     favicon: { hue: 210, letter: 'B' },

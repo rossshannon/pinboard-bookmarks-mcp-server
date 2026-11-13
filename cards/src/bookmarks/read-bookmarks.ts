@@ -30,6 +30,20 @@ export interface BookmarkRow {
   readonly notes: string | undefined
   readonly tags: readonly string[]
   readonly savedAt: string | undefined
+  /**
+   * The server's token for this bookmark's URL, which `get_link_previews`
+   * wants back with it. `undefined` when the server sent none: that row is
+   * not asked about.
+   */
+  readonly previewToken: string | undefined
+}
+
+/** Far longer than the server's fourteen characters; a token over it is not one. */
+const MAX_PREVIEW_TOKEN_LENGTH = 128
+
+const readPreviewToken = (value: unknown): string | undefined => {
+  const token = readText(value)
+  return token === undefined || token === '' || token.length > MAX_PREVIEW_TOKEN_LENGTH ? undefined : token
 }
 
 export type BookmarksSubject =
@@ -67,6 +81,7 @@ const readRow = (value: unknown, index: number): BookmarkRow | undefined => {
     host,
     key: readText(value['id']) ?? `${url ?? ''}#${String(index)}`,
     notes: readText(value['notes'])?.trim(),
+    previewToken: readPreviewToken(value['preview_token']),
     savedAt: readText(value['saved_at']),
     tags: readTextList(value['tags']),
     title,

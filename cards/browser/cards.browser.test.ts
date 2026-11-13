@@ -19,9 +19,9 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import type { CardName } from '../scripts/build-cards.ts'
 import type { RenderOptions } from '../scripts/card-host.ts'
 
-import { CARD_FIXTURES, PREVIEW_RUNS } from '../fixtures/index.ts'
+import { CARD_FIXTURES, PREVIEW_RUNS, previewItems } from '../fixtures/index.ts'
 import { CARDS } from '../scripts/build-cards.ts'
-import { launchBrowser, renderCard, toolCalls, waitForSettle } from '../scripts/card-host.ts'
+import { askedUrls, launchBrowser, renderCard, toolCalls, waitForSettle } from '../scripts/card-host.ts'
 
 let browser: Browser
 const open: Page[] = []
@@ -215,7 +215,7 @@ describe('link previews', () => {
       expect(Math.abs(iframe - documentHeight)).toBeLessThanOrEqual(1)
       // Every image the card drew is an inline raster that really decoded.
       const sources = await frame.locator('img').evaluateAll(images => images.map(image => image.getAttribute('src') ?? ''))
-      for (const source of sources) expect(source).toMatch(/^data:image\/(webp|png|jpeg);base64,/)
+      for (const source of sources) expect(source).toMatch(/^data:image\/(webp|png);base64,/)
       expect(await decodedImages(frame, 'img')).toBe(sources.length)
       await page.close()
     })
@@ -224,7 +224,8 @@ describe('link previews', () => {
   it('asks the host for the previews of the rows it drew, and draws them', async () => {
     const { frame, page } = await render({ card: 'bookmarks', previews: 'ok', scenario: 'rich' })
 
-    expect(await toolCalls(page)).toEqual([{ arguments: { urls: richUrls }, name: 'get_link_previews' }])
+    // Each bookmark goes back as the server's own pair: its URL and the token sent with it.
+    expect(await toolCalls(page)).toEqual([{ arguments: { items: previewItems(richUrls) }, name: 'get_link_previews' }])
     // Five of the six pages have a picture; all six a favicon.
     expect(await decodedImages(frame, '.bookmark__thumb img')).toBe(5)
     expect(await decodedImages(frame, 'img.favicon')).toBe(6)
@@ -355,7 +356,7 @@ describe('link previews', () => {
 
     await expect.poll(async () => (await toolCalls(page)).length, { timeout: 10_000 }).toBe(2)
     const calls = await toolCalls(page)
-    expect(calls[1]?.arguments?.urls).toEqual(richUrls.slice(3))
+    expect(askedUrls(calls[1])).toEqual(richUrls.slice(3))
     await expect.poll(() => frame.locator('.bookmark__thumb--pending').count(), { timeout: 10_000 }).toBe(0)
     await expect.poll(() => decodedImages(frame, '.bookmark__thumb img')).toBe(5)
     await waitForSettle(page)
@@ -371,7 +372,7 @@ describe('link previews', () => {
     expect((await toolCalls(page))).toHaveLength(1)
 
     await expect.poll(async () => (await toolCalls(page)).length, { timeout: 15_000 }).toBe(2)
-    expect((await toolCalls(page))[1]?.arguments?.urls).toEqual([richUrls[1], richUrls[3]])
+    expect(askedUrls((await toolCalls(page))[1])).toEqual([richUrls[1], richUrls[3]])
     await expect.poll(() => decodedImages(frame, '.bookmark__thumb img'), { timeout: 10_000 }).toBe(5)
     await waitForSettle(page)
     const { document: documentHeight, iframe } = await heights(page, frame)
@@ -386,12 +387,61 @@ describe('link previews', () => {
     expect(await frame.locator('.bookmark__thumb--pending').count()).toBe(2)
 
     await expect.poll(async () => (await toolCalls(page)).length, { timeout: 15_000 }).toBe(2)
-    expect((await toolCalls(page))[1]?.arguments?.urls).toEqual([richUrls[2], richUrls[4]])
+    expect(askedUrls((await toolCalls(page))[1])).toEqual([richUrls[2], richUrls[4]])
     await expect.poll(() => frame.locator('.bookmark__thumb--pending').count(), { timeout: 10_000 }).toBe(0)
     await expect.poll(() => decodedImages(frame, '.bookmark__thumb img'), { timeout: 10_000 }).toBe(5)
     await waitForSettle(page)
     const { document: documentHeight, iframe } = await heights(page, frame)
     expect(Math.abs(iframe - documentHeight)).toBeLessThanOrEqual(1)
+    await page.close()
+  })
+
+  it.each([375, 600])('never cuts a deceptive host short at %dpx: it wraps, and its real end is on the row', async (width) => {
+    const { frame, page } = await render({ card: 'bookmarks', previews: 'ok', scenario: 'deceptive-host', width })
+    const hosts = ['accounts.google.com.security-check.evil.example', 'paypal.com.account-verify.example']
+
+    const measured = await frame.locator('.bookmark__host').evaluateAll(elements => elements.map((element) => {
+      const style = getComputedStyle(element)
+      const row = element.closest('.bookmark__body')?.getBoundingClientRect()
+      // Where the last characters of the host are drawn: the registrable
+      // domain, which is the part a reader must be able to see.
+      const text = element.firstChild
+      const range = document.createRange()
+      if (text) {
+        range.setStart(text, Math.max(0, (text.textContent?.length ?? 0) - 12))
+        range.setEnd(text, text.textContent?.length ?? 0)
+      }
+      const end = range.getBoundingClientRect()
+      return {
+        clippedAcross: element.scrollWidth > element.clientWidth + 1,
+        endInsideRow: row !== undefined && end.width > 0 && end.left >= row.left - 1 && end.right <= row.right + 1,
+        lines: Math.round(element.getBoundingClientRect().height / Number.parseFloat(style.lineHeight)),
+        overflow: style.overflow,
+        text: (element as HTMLElement).innerText,
+        textOverflow: style.textOverflow,
+        whiteSpace: style.whiteSpace,
+      }
+    }))
+
+    expect(measured.map(each => each.text)).toEqual(hosts)
+    for (const each of measured) {
+      expect(each.textOverflow).not.toBe('ellipsis')
+      expect(each.overflow).toBe('visible')
+      expect(each.whiteSpace).toBe('normal')
+      expect(each.clippedAcross).toBe(false)
+      expect(each.endInsideRow).toBe(true)
+    }
+    // At phone width the long one really does need a second line.
+    if (width === 375) expect(measured[0]?.lines).toBeGreaterThan(1)
+    // Nothing on the row spills out of the card either.
+    const { document: documentHeight, iframe } = await heights(page, frame)
+    expect(Math.abs(iframe - documentHeight)).toBeLessThanOrEqual(1)
+    expect(await frame.locator('body').evaluate(body => body.scrollWidth <= body.clientWidth + 1)).toBe(true)
+
+    // A site name that names another site is not shown at all; an innocent one is, where there is room.
+    const names = await frame.locator('.bookmark__site').evaluateAll(elements => elements.map(element => element.textContent))
+    expect(names).toEqual(['Account security'])
+    expect(await frame.locator('.bookmark__source').allInnerTexts()).not.toContain('paypal.com – Secure login')
     await page.close()
   })
 
@@ -430,21 +480,21 @@ describe('link previews', () => {
 
     // The first call after the scroll carries the screenful, where an
     // observer per row would have sent the first row on its own.
-    const afterScroll = (await toolCalls(page)).slice(before).map(call => call.arguments?.urls?.length ?? 0)
+    const afterScroll = (await toolCalls(page)).slice(before).map(call => askedUrls(call).length)
     expect(afterScroll[0]).toBeGreaterThanOrEqual(4)
     await page.close()
   })
 
   it('asks about rows past the first eight only after "Show all", and only as they come into view', async () => {
     const { frame, page } = await render({ card: 'bookmarks', previews: 'ok', scenario: 'rich-many' })
-    expect((await toolCalls(page)).map(call => call.arguments?.urls)).toEqual([manyUrls.slice(0, 8)])
+    expect((await toolCalls(page)).map(call => askedUrls(call))).toEqual([manyUrls.slice(0, 8)])
 
     await frame.getByRole('button', { name: 'Show all' }).click()
     await waitForSettle(page)
 
     // The frame is now far taller than the 900px window: the rows below the
     // fold have not been asked about, and still hold their places.
-    const afterExpand = (await toolCalls(page)).flatMap(call => call.arguments?.urls ?? [])
+    const afterExpand = (await toolCalls(page)).flatMap(call => askedUrls(call))
     expect(afterExpand.length).toBeLessThan(manyUrls.length)
     expect(afterExpand).toEqual(manyUrls.slice(0, afterExpand.length))
     expect(await frame.locator('.bookmark__thumb--pending').count()).toBe(manyUrls.length - afterExpand.length)
@@ -452,14 +502,14 @@ describe('link previews', () => {
     await page.evaluate(() => {
       globalThis.scrollTo(0, document.documentElement.scrollHeight)
     })
-    await expect.poll(async () => (await toolCalls(page)).flatMap(call => call.arguments?.urls ?? []).length, { timeout: 10_000 }).toBeGreaterThan(afterExpand.length)
+    await expect.poll(async () => (await toolCalls(page)).flatMap(call => askedUrls(call)).length, { timeout: 10_000 }).toBeGreaterThan(afterExpand.length)
     await expect.poll(() => frame.locator('.bookmark').last().locator('.bookmark__thumb--pending').count(), { timeout: 10_000 }).toBe(0)
 
     // Each URL asked about once, never more than eight a call.
     const calls = await toolCalls(page)
-    const asked = calls.flatMap(call => call.arguments?.urls ?? [])
+    const asked = calls.flatMap(call => askedUrls(call))
     expect(new Set(asked).size).toBe(asked.length)
-    for (const call of calls) expect(call.arguments?.urls?.length).toBeLessThanOrEqual(8)
+    for (const call of calls) expect(askedUrls(call).length).toBeLessThanOrEqual(8)
     await waitForSettle(page)
     const { document: documentHeight, iframe } = await heights(page, frame)
     expect(Math.abs(iframe - documentHeight)).toBeLessThanOrEqual(1)

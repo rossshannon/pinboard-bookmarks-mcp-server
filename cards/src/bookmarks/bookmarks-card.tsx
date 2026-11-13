@@ -26,7 +26,7 @@ import type { ReactNode } from 'react'
 import { useEffect, useId, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react'
 
 import type { CardRenderContext } from '../shell/card-shell.tsx'
-import type { PreviewLoader, PreviewState } from './preview-loader.ts'
+import type { PreviewItem, PreviewLoader, PreviewState } from './preview-loader.ts'
 import type { BookmarkRow } from './read-bookmarks.ts'
 import type { RowWatcher } from './row-watcher.ts'
 
@@ -41,6 +41,7 @@ import { describeSubject } from './describe.ts'
 import { createPreviewLoader } from './preview-loader.ts'
 import { matchedTags, readBookmarks } from './read-bookmarks.ts'
 import { createRowWatcher } from './row-watcher.ts'
+import { siteNameBeside } from './site-name.ts'
 
 /**
  * Rows drawn before "Show all". A search returns up to a hundred and a tag
@@ -120,20 +121,6 @@ const Notes = ({ notes, remeasure }: NotesProperties): ReactNode => {
 /** The first letter or digit of a site's name, for the tile that stands in for a favicon. */
 const initialOf = (host: string): string => /[\p{L}\p{N}]/u.exec(host)?.[0] ?? '·'
 
-const DOMAIN_LIKE = /^[^\s/@]+\.[^\s/@]+$/u
-
-/**
- * A page's name for itself, when it is worth showing beside the host: not
- * when it only repeats the host, and not when it is shaped like some other
- * host, which beside the real one could only mislead.
- */
-export const siteNameBeside = (siteName: string | undefined, host: string | undefined): string | undefined => {
-  if (siteName === undefined || host === undefined) return undefined
-  const plain = (value: string): string => value.trim().toLowerCase().replace(/^www\./u, '')
-  if (plain(siteName) === plain(host) || DOMAIN_LIKE.test(siteName.trim())) return undefined
-  return siteName
-}
-
 interface RowProperties {
   readonly context: CardRenderContext
   /** Ask about this row at once, not when it nears the viewport: the rows drawn before "Show all". */
@@ -143,13 +130,14 @@ interface RowProperties {
   readonly previews: PreviewLoader | undefined
   readonly row: BookmarkRow
   /** The card's one watcher for rows that are not `eager`. */
-  readonly watcher: RowWatcher
+  readonly watcher: RowWatcher<PreviewItem>
 }
 
 const Bookmark = ({ context, eager, matched, previews, row, watcher }: RowProperties): ReactNode => {
   const element = useRef<HTMLLIElement>(null)
-  const { url } = row
-  const state = previews === undefined || url === undefined ? NO_PREVIEW : previews.state(url)
+  const { previewToken: token, url } = row
+  // A row the server sent no token for is not one it will look up.
+  const state = previews === undefined || url === undefined || token === undefined ? NO_PREVIEW : previews.state(url)
   const pending = state.kind === 'pending'
 
   // Ask for this row's preview: at once for the rows a card opens with, and
@@ -157,13 +145,13 @@ const Bookmark = ({ context, eager, matched, previews, row, watcher }: RowProper
   // bookmarks does not mean two hundred lookups nobody scrolls to.
   useEffect(() => {
     const target = element.current
-    if (previews === undefined || url === undefined || !pending || !target) return undefined
+    if (previews === undefined || url === undefined || token === undefined || !pending || !target) return undefined
     if (eager) {
-      previews.request([url])
+      previews.request([{ token, url }])
       return undefined
     }
-    return watcher.watch(target, url)
-  }, [eager, pending, previews, url, watcher])
+    return watcher.watch(target, { token, url })
+  }, [eager, pending, previews, token, url, watcher])
 
   const preview = state.kind === 'ready' ? state.preview : undefined
   const saved = shortDate(row.savedAt)
@@ -177,17 +165,15 @@ const Bookmark = ({ context, eager, matched, previews, row, watcher }: RowProper
       <div className="bookmark__body">
         {(host !== undefined || saved !== undefined) && (
           <p className="bookmark__source">
-            {host !== undefined && (
-              <>
-                {preview?.favicon === undefined
-                  ? <span aria-hidden="true" className="favicon favicon--letter">{initialOf(host)}</span>
-                  : <SafeImage className="favicon" image={preview.favicon} />}
-                {/* The page's own name may say anything; the host beside it is where the link goes. */}
-                {siteName !== undefined && <span className="bookmark__site">{siteName}</span>}
-                <span className="bookmark__host">{host}</span>
-              </>
-            )}
-            {saved !== undefined && <time dateTime={row.savedAt} title={instantTitle(row.savedAt)}>{saved}</time>}
+            {host !== undefined && (preview?.favicon === undefined
+              ? <span aria-hidden="true" className="favicon favicon--letter">{initialOf(host)}</span>
+              : <SafeImage className="favicon" image={preview.favicon} />)}
+            <span className="bookmark__where">
+              {/* The page's own name may say anything; the host beside it is where the link goes. */}
+              {siteName !== undefined && <span className="bookmark__site">{siteName}</span>}
+              {host !== undefined && <span className="bookmark__host">{host}</span>}
+              {saved !== undefined && <time dateTime={row.savedAt} title={instantTitle(row.savedAt)}>{saved}</time>}
+            </span>
           </p>
         )}
         <p className="bookmark__title">
@@ -248,13 +234,13 @@ const usePreviews = (context: CardRenderContext, enabled: boolean): PreviewLoade
     loader.dispose()
   }, [loader])
 
-  // A call made before the bridge connected may have had no way through. When
-  // it connects, the loader picks up where it stopped, and the card renders
-  // again: `canCallTools()` may have a different answer now.
+  // A call made before the bridge connected may have had no way through. The
+  // loader is told when it connects, whatever it is doing at the time, and
+  // the card renders again: `canCallTools()` may have a different answer now.
   const [, setConnections] = useState(0)
   const { onConnect } = context
   useEffect(() => onConnect(() => {
-    loader.resume()
+    loader.connected()
     setConnections(count => count + 1)
   }), [loader, onConnect])
 
@@ -286,8 +272,8 @@ export const BookmarksCard = ({ context, data }: BookmarksCardProperties): React
   useEffect(() => {
     latestPreviews.current = previews
   })
-  const [watcher] = useState(() => createRowWatcher((urls) => {
-    latestPreviews.current?.request(urls)
+  const [watcher] = useState(() => createRowWatcher<PreviewItem>((items) => {
+    latestPreviews.current?.request(items)
   }))
   useEffect(() => () => {
     watcher.dispose()

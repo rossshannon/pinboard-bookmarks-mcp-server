@@ -7,7 +7,8 @@
  *   the host said at the handshake that it proxies tool calls;
  * - before the handshake, ChatGPT's own `window.openai.callTool` when that
  *   exists, since that host may render from `toolOutput` and never finish it;
- * - otherwise the call waits for the bridge to connect, up to the timeout.
+ * - if that early channel refuses the call, or there is none, the call waits
+ *   for the bridge to connect, up to the timeout, and goes down it then.
  *
  * Every call resolves and none rejects. A card's own tool call is a nicety on
  * top of a result it has already drawn, so whatever goes wrong — no bridge, a
@@ -15,10 +16,14 @@
  * an answer that never comes — is one outcome, "unavailable", with the reason
  * kept for the breadcrumbs. The card carries on with what it has.
  *
- * Two of the reasons are not final. Before the handshake, "not-connected" and
- * "rejected-before-connect" say only that the early channel did not work; the
- * bridge may still connect, and `onConnect` tells a card when it has, so the
- * card can ask again down the proper channel.
+ * A call the card has stopped waiting for is never sent late. One parked for
+ * the bridge finds, when the bridge arrives, that its time ran out, and goes
+ * no further: the card has moved on, and may already have asked again.
+ *
+ * Two of the reasons are not final. "not-connected" and
+ * "rejected-before-connect" say only that no bridge came in time; one may
+ * still connect, and `onConnect` tells a card when it has, so the card can
+ * ask again down the proper channel.
  */
 
 import type { BreadcrumbLog } from './breadcrumbs.ts'
@@ -38,8 +43,8 @@ export type ToolUnavailableReason =
   | 'rejected'
   /**
    * ChatGPT's `window.openai.callTool`, tried because the bridge had not
-   * connected yet, refused the call or answered with nothing readable. The
-   * bridge has not been tried.
+   * connected yet, refused the call or answered with nothing readable, and
+   * no bridge connected in time to try instead.
    */
   | 'rejected-before-connect'
   /** Nothing came back in time. */
@@ -116,31 +121,48 @@ export const createToolCaller = (
   const waiting: Array<() => void> = []
   const connectListeners = new Set<() => void>()
 
-  const send = async (name: string, toolArguments: Record<string, unknown>): Promise<ToolCallOutcome> => {
+  /** One call's standing: whether anyone is still waiting for its answer. */
+  interface Standing { wanted: boolean }
+
+  /** Try ChatGPT's own channel. `undefined` means it did not work, and the bridge is still worth trying. */
+  const sendEarly = async (viaOpenAi: OpenAiCallTool, name: string, toolArguments: Record<string, unknown>): Promise<ToolCallOutcome | undefined> => {
+    breadcrumbs.record('callTool:openai', name)
+    // What this channel resolves to is not documented, and a host may offer
+    // it without letting this tool through it. Neither says the bridge would
+    // refuse. A tool that ran and failed is another matter: that is final.
+    try {
+      const outcome = readOutcome(await viaOpenAi(name, toolArguments))
+      return outcome.status === 'unavailable' && outcome.reason === 'unreadable' ? undefined : outcome
+    }
+    catch (error) {
+      breadcrumbs.record('callTool:error', describeRejection(error))
+      return undefined
+    }
+  }
+
+  const send = async (name: string, toolArguments: Record<string, unknown>, standing: Standing, early: { failed: boolean }): Promise<ToolCallOutcome> => {
     let app = connectedApp()
     if (!app) {
       const viaOpenAi = openAiCallTool()
       if (viaOpenAi) {
-        breadcrumbs.record('callTool:openai', name)
-        // What this channel resolves to is not documented, and a host may
-        // offer it without letting this tool through it. Neither says the
-        // bridge would refuse, so neither is final.
-        try {
-          const outcome = readOutcome(await viaOpenAi(name, toolArguments))
-          return outcome.status === 'unavailable' && outcome.reason === 'unreadable' ? unavailable('rejected-before-connect') : outcome
-        }
-        catch (error) {
-          breadcrumbs.record('callTool:error', describeRejection(error))
-          return unavailable('rejected-before-connect')
-        }
+        const outcome = await sendEarly(viaOpenAi, name, toolArguments)
+        if (outcome !== undefined) return outcome
+        early.failed = true
+        // The bridge may have connected while that was in flight.
+        app = connectedApp()
       }
+    }
+    if (!app) {
       breadcrumbs.record('callTool:held', name)
       await new Promise<void>((resolve) => {
         waiting.push(resolve)
       })
       app = connectedApp()
-      if (!app) return unavailable('not-connected')
     }
+    // Time ran out while this waited, and the card was told so: sending it
+    // now would be a call nobody reads, beside whatever the card sent since.
+    if (!standing.wanted) return unavailable('timeout')
+    if (!app) return unavailable(early.failed ? 'rejected-before-connect' : 'not-connected')
     if (app.getHostCapabilities()?.serverTools === undefined) return unavailable('no-capability')
     return readOutcome(await app.callServerTool({ arguments: toolArguments, name }, { timeout: timeoutMs }))
   }
@@ -148,18 +170,22 @@ export const createToolCaller = (
   return {
     callTool: async (name, toolArguments) => {
       breadcrumbs.record('callTool:requested', name)
+      const standing: Standing = { wanted: true }
+      const early = { failed: false }
       let timer: ReturnType<typeof setTimeout> | undefined
       const timedOut = new Promise<ToolCallOutcome>((resolve) => {
         timer = setTimeout(() => {
-          resolve(unavailable(connectedApp() ? 'timeout' : 'not-connected'))
+          if (connectedApp()) resolve(unavailable('timeout'))
+          else resolve(unavailable(early.failed ? 'rejected-before-connect' : 'not-connected'))
         }, timeoutMs)
       })
-      const answered = send(name, toolArguments).catch((error: unknown): ToolCallOutcome => {
+      const answered = send(name, toolArguments, standing, early).catch((error: unknown): ToolCallOutcome => {
         breadcrumbs.record('callTool:error', describeRejection(error))
         return unavailable('rejected')
       })
       const outcome = await Promise.race([answered, timedOut])
       clearTimeout(timer)
+      standing.wanted = false
       breadcrumbs.record(outcome.status === 'ok' ? 'callTool:result' : 'callTool:unavailable', outcome.status === 'ok' ? name : `${name} ${outcome.reason}`)
       return outcome
     },

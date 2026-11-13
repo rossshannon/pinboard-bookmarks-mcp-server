@@ -227,12 +227,14 @@ ul {
 }
 
 /* Where it lives and when it was saved, above the title as a link card has
-   it: favicon, the page's name for itself if it has one, the host, the date.
-   The host is the part to trust, because it is where the link goes, so it is
-   the page's name that gives way when the line is short of room. */
+   it: favicon, then the page's name for itself if it has one, the host, the
+   date. The host is the part to trust, because it is where the link goes,
+   and the end of it is the part that matters most. So the host is never cut
+   short: a long one wraps, on to a line of its own if need be. When
+   something has to give, it is the page's name. */
 .bookmark__source {
   display: flex;
-  align-items: center;
+  align-items: start;
   gap: 6px;
   color: var(--pb-text-faint);
   font-size: var(--pb-text-sm);
@@ -240,26 +242,55 @@ ul {
   min-inline-size: 0;
 }
 
+/* The words of the line, which wrap as a line of text would. The gap between
+   two of them is where the separating dot is drawn. */
+.bookmark__where {
+  --separator-gap: 1rem;
+
+  display: flex;
+  flex: 1;
+  flex-wrap: wrap;
+  column-gap: var(--separator-gap);
+  min-inline-size: 0;
+  /* A dot before the first word of a wrapped line would hang in the margin;
+     there it is clipped away instead. */
+  overflow: clip;
+}
+
 .bookmark__site,
 .bookmark__host {
+  position: relative;
   min-inline-size: 0;
-  overflow: hidden;
+  max-inline-size: 100%;
   color: var(--pb-text-muted);
+}
+
+.bookmark__site {
+  /* Never more than a share of the line, so the host can sit beside it. */
+  max-inline-size: 45%;
+  overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-/* Beside a page's own name the host does not shrink at all: sharing even a
-   fraction of a pixel of the squeeze would put an ellipsis on it. Only a
-   host too long for most of the line is cut. */
-.bookmark__site + .bookmark__host {
-  flex: none;
-  max-inline-size: 60%;
+.bookmark__host {
+  overflow-wrap: anywhere;
 }
 
-.bookmark__site + .bookmark__host::before {
+.bookmark__where time {
+  position: relative;
+  white-space: nowrap;
+}
+
+.bookmark__site + .bookmark__host::before,
+.bookmark__host + time::before {
   content: "·";
-  margin-inline-end: 6px;
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline-start: calc(-1 * var(--separator-gap));
+  inline-size: var(--separator-gap);
+  color: var(--pb-text-faint);
+  text-align: center;
 }
 
 /* In a list too narrow for both, a phone's, the page's name is left out and
@@ -269,24 +300,9 @@ ul {
     display: none;
   }
 
-  .bookmark__site + .bookmark__host {
-    flex: 0 1 auto;
-    max-inline-size: none;
-  }
-
   .bookmark__site + .bookmark__host::before {
     content: none;
   }
-}
-
-.bookmark__source time {
-  flex: none;
-  white-space: nowrap;
-}
-
-.bookmark__host + time::before {
-  content: "·";
-  margin-inline-end: 6px;
 }
 
 /* A site's favicon, or the tile that stands in for one: the same box either
@@ -295,6 +311,8 @@ ul {
   flex: none;
   inline-size: 16px;
   block-size: 16px;
+  /* Centred on the first line of the words beside it, however many there are. */
+  margin-block-start: calc((var(--pb-text-sm-lh) - 16px) / 2);
   border-radius: 4px;
   object-fit: cover;
 }

@@ -1,12 +1,16 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import type { ToolCallOutcome } from '../shell/tool-caller.ts'
-import type { PreviewLoader } from './preview-loader.ts'
+import type { PreviewItem, PreviewLoader } from './preview-loader.ts'
 
 import { BUSY_RETRY_DELAY_MS, createPreviewLoader, isPreviewableUrl, MAX_PREVIEW_URL_LENGTH, PENDING_RETRY_DELAY_MS, PREVIEW_BATCH_SIZE, PREVIEW_TOOL } from './preview-loader.ts'
 
 const url = (index: number): string => `https://example.com/${String(index)}`
 const urls = (count: number, from = 0): string[] => Array.from({ length: count }, (_, index) => url(from + index))
+
+/** The token a test's server would have sent with a URL. */
+const tokenOf = (asked: string): string => `token-for-${asked}`
+const items = (asked: readonly string[]): PreviewItem[] => asked.map(each => ({ token: tokenOf(each), url: each }))
 
 const ok = (asked: readonly string[], statusOf: (url: string) => string = () => 'ok', extra: Record<string, unknown> = {}): ToolCallOutcome => ({
   data: { previews: asked.map(asked_ => ({ site_name: `Site of ${asked_}`, status: statusOf(asked_), url: asked_ })), ...extra },
@@ -32,7 +36,11 @@ const harness = (): {
     callTool: (name, toolArguments) => {
       expect(name).toBe(PREVIEW_TOOL)
       return new Promise((resolve) => {
-        calls.push({ answer: resolve, urls: toolArguments['urls'] as string[] })
+        const sent = toolArguments['items'] as PreviewItem[]
+        // Every URL goes out with the token it came in with, and nothing else does.
+        expect(Object.keys(toolArguments)).toEqual(['items'])
+        for (const item of sent) expect(item).toEqual({ token: tokenOf(item.url), url: item.url })
+        calls.push({ answer: resolve, urls: sent.map(item => item.url) })
       })
     },
     record,
@@ -58,7 +66,7 @@ describe('createPreviewLoader', () => {
   it('sends requests made in the same tick as one batch, in order', async () => {
     const { calls, loader } = harness()
 
-    for (const each of urls(5)) loader.request([each])
+    for (const each of urls(5)) loader.request(items([each]))
     await settle()
 
     expect(calls).toHaveLength(1)
@@ -68,7 +76,7 @@ describe('createPreviewLoader', () => {
   it('sends at most eight URLs a call, one call at a time', async () => {
     const { calls, loader } = harness()
 
-    loader.request(urls(20))
+    loader.request(items(urls(20)))
     await settle()
     expect(calls).toHaveLength(1)
     expect(call(calls, 0).urls).toEqual(urls(PREVIEW_BATCH_SIZE))
@@ -91,9 +99,9 @@ describe('createPreviewLoader', () => {
   it('queues what is requested while a call is in flight for the next one', async () => {
     const { calls, loader } = harness()
 
-    loader.request(urls(2))
+    loader.request(items(urls(2)))
     await settle()
-    loader.request(urls(3, 2))
+    loader.request(items(urls(3, 2)))
     await settle()
     expect(calls).toHaveLength(1)
 
@@ -105,16 +113,16 @@ describe('createPreviewLoader', () => {
   it('asks about a URL once, however often it is requested', async () => {
     const { calls, loader } = harness()
 
-    loader.request([url(1), url(1), url(2)])
-    loader.request([url(2), url(1)])
+    loader.request(items([url(1), url(1), url(2)]))
+    loader.request(items([url(2), url(1)]))
     await settle()
     expect(call(calls, 0).urls).toEqual([url(1), url(2)])
 
     // Again while in flight, and again once answered.
-    loader.request([url(1)])
+    loader.request(items([url(1)]))
     call(calls, 0).answer(ok(call(calls, 0).urls))
     await settle()
-    loader.request([url(1), url(2)])
+    loader.request(items([url(1), url(2)]))
     await settle()
 
     expect(calls).toHaveLength(1)
@@ -123,7 +131,7 @@ describe('createPreviewLoader', () => {
   it('never asks about anything but a web URL', async () => {
     const { calls, loader } = harness()
 
-    loader.request(['javascript:alert(1)', 'data:text/html,x', '/relative', '', 'ftp://example.com/'])
+    loader.request(items(['javascript:alert(1)', 'data:text/html,x', '/relative', '', 'ftp://example.com/']))
     await settle()
 
     expect(calls).toHaveLength(0)
@@ -134,7 +142,7 @@ describe('createPreviewLoader', () => {
     const { calls, loader } = harness()
 
     expect(loader.state(url(1))).toEqual({ kind: 'pending' })
-    loader.request([url(1)])
+    loader.request(items([url(1)]))
     await settle()
     expect(loader.state(url(1))).toEqual({ kind: 'pending' })
 
@@ -150,13 +158,13 @@ describe('createPreviewLoader', () => {
   it.each(['no_data', 'error'])('settles a %s answer as nothing, and does not ask again', async (status) => {
     const { calls, loader } = harness()
 
-    loader.request([url(1)])
+    loader.request(items([url(1)]))
     await settle()
     call(calls, 0).answer(ok([url(1)], () => status))
     await settle()
 
     expect(loader.state(url(1))).toEqual({ kind: 'none' })
-    loader.request([url(1)])
+    loader.request(items([url(1)]))
     await settle()
     expect(calls).toHaveLength(1)
   })
@@ -167,7 +175,7 @@ describe('createPreviewLoader', () => {
     const unsubscribe = loader.subscribe(listener)
     expect(loader.version()).toBe(0)
 
-    loader.request(urls(9))
+    loader.request(items(urls(9)))
     await settle()
     call(calls, 0).answer(ok(call(calls, 0).urls))
     await settle()
@@ -208,7 +216,7 @@ describe('createPreviewLoader', () => {
       const { calls, loader } = harness()
       const tooLong = `https://example.com/${'a'.repeat(MAX_PREVIEW_URL_LENGTH)}`
 
-      loader.request([url(0), tooLong, 'https://example.com/a b', url(1)])
+      loader.request(items([url(0), tooLong, 'https://example.com/a b', url(1)]))
       await settle()
 
       expect(call(calls, 0).urls).toEqual([url(0), url(1)])
@@ -223,7 +231,7 @@ describe('createPreviewLoader', () => {
       const listener = vi.fn()
       loader.subscribe(listener)
 
-      loader.request(urls(10))
+      loader.request(items(urls(10)))
       await settle()
       call(calls, 0).answer({ reason, status: 'unavailable' })
       await settle()
@@ -235,7 +243,7 @@ describe('createPreviewLoader', () => {
       expect(record).toHaveBeenCalledWith('previews:suspended', reason)
       expect(listener).toHaveBeenCalledOnce()
 
-      loader.resume()
+      loader.connected()
       await settle()
 
       // The same URLs, in the same order, and the rows wait again.
@@ -248,18 +256,75 @@ describe('createPreviewLoader', () => {
       expect(call(calls, 2).urls).toEqual(urls(2, 8))
     })
 
-    it('remembers what is requested while suspended', async () => {
-      const { calls, loader } = harness()
+    it.each(['not-connected', 'rejected-before-connect'] as const)('remembers a connect that lands while the first call is still in flight (%s)', async (reason) => {
+      // The usual order on ChatGPT: the card asks through the early channel,
+      // the bridge connects, and only then does the early call come back
+      // refused. The connect must not be lost for having come first.
+      const { calls, loader, record } = harness()
+      const listener = vi.fn()
+      loader.subscribe(listener)
 
-      loader.request([url(0)])
+      loader.request(items(urls(10)))
+      await settle()
+      loader.connected()
+      expect(calls).toHaveLength(1)
+      call(calls, 0).answer({ reason, status: 'unavailable' })
+      await settle()
+
+      // Sent again at once, down the bridge: never suspended, the rows never gave up their places.
+      expect(record).not.toHaveBeenCalledWith('previews:suspended', expect.anything())
+      expect(record).toHaveBeenCalledWith('previews:resent', reason)
+      expect(listener).not.toHaveBeenCalled()
+      expect(call(calls, 1).urls).toEqual(urls(8))
+      expect(loader.state(url(0))).toEqual({ kind: 'pending' })
+
+      call(calls, 1).answer(ok(call(calls, 1).urls))
+      await settle()
+      expect(loader.state(url(0)).kind).toBe('ready')
+      expect(call(calls, 2).urls).toEqual(urls(2, 8))
+    })
+
+    it('takes no way through as final for a call sent after the connect', async () => {
+      const { calls, loader, record } = harness()
+
+      loader.connected()
+      loader.request(items([url(0)]))
       await settle()
       call(calls, 0).answer({ reason: 'not-connected', status: 'unavailable' })
       await settle()
-      loader.request([url(1)])
+
+      expect(calls).toHaveLength(1)
+      expect(record).toHaveBeenCalledWith('previews:stopped', 'not-connected')
+      expect(loader.state(url(0))).toEqual({ kind: 'none' })
+    })
+
+    it('resends once: the resent call failing the same way is final', async () => {
+      const { calls, loader, record } = harness()
+
+      loader.request(items([url(0)]))
+      await settle()
+      loader.connected()
+      call(calls, 0).answer({ reason: 'rejected-before-connect', status: 'unavailable' })
+      await settle()
+      call(calls, 1).answer({ reason: 'rejected-before-connect', status: 'unavailable' })
+      await settle()
+
+      expect(calls).toHaveLength(2)
+      expect(record).toHaveBeenCalledWith('previews:stopped', 'rejected-before-connect')
+    })
+
+    it('remembers what is requested while suspended', async () => {
+      const { calls, loader } = harness()
+
+      loader.request(items([url(0)]))
+      await settle()
+      call(calls, 0).answer({ reason: 'not-connected', status: 'unavailable' })
+      await settle()
+      loader.request(items([url(1)]))
       await settle()
       expect(calls).toHaveLength(1)
 
-      loader.resume()
+      loader.connected()
       await settle()
 
       expect(call(calls, 1).urls).toEqual([url(0), url(1)])
@@ -268,15 +333,15 @@ describe('createPreviewLoader', () => {
     it('resumes once: unavailable after that is final', async () => {
       const { calls, loader, record } = harness()
 
-      loader.request([url(0)])
+      loader.request(items([url(0)]))
       await settle()
       call(calls, 0).answer({ reason: 'rejected-before-connect', status: 'unavailable' })
       await settle()
-      loader.resume()
+      loader.connected()
       await settle()
       call(calls, 1).answer({ reason: 'not-connected', status: 'unavailable' })
       await settle()
-      loader.resume()
+      loader.connected()
       await settle()
 
       expect(calls).toHaveLength(2)
@@ -289,12 +354,12 @@ describe('createPreviewLoader', () => {
       const listener = vi.fn()
       loader.subscribe(listener)
 
-      loader.resume()
-      loader.request([url(0)])
+      loader.connected()
+      loader.request(items([url(0)]))
       await settle()
       call(calls, 0).answer({ reason: 'rejected', status: 'unavailable' })
       await settle()
-      loader.resume()
+      loader.connected()
       await settle()
 
       expect(calls).toHaveLength(1)
@@ -308,7 +373,7 @@ describe('createPreviewLoader', () => {
     it('keeps the row waiting and asks about it once more a few seconds on', async () => {
       const { calls, loader, record, timers } = harness()
 
-      loader.request(urls(3))
+      loader.request(items(urls(3)))
       await settle()
       call(calls, 0).answer(ok(call(calls, 0).urls, pendingFor(each => each === url(1))))
       await settle()
@@ -319,7 +384,7 @@ describe('createPreviewLoader', () => {
       expect(timers[0]?.delayMs).toBe(PENDING_RETRY_DELAY_MS)
       expect(record).toHaveBeenCalledWith('previews:pending', expect.stringContaining('1 again'))
       // Asking again in the meantime does not send it twice.
-      loader.request([url(1)])
+      loader.request(items([url(1)]))
       await settle()
       expect(calls).toHaveLength(1)
 
@@ -335,7 +400,7 @@ describe('createPreviewLoader', () => {
     it('does not hold up the rest of the queue while it waits', async () => {
       const { calls, loader } = harness()
 
-      loader.request(urls(10))
+      loader.request(items(urls(10)))
       await settle()
       call(calls, 0).answer(ok(call(calls, 0).urls, pendingFor(() => true)))
       await settle()
@@ -346,7 +411,7 @@ describe('createPreviewLoader', () => {
     it('gives the row nothing when it is still pending the second time', async () => {
       const { calls, loader, timers } = harness()
 
-      loader.request([url(1), url(2)])
+      loader.request(items([url(1), url(2)]))
       await settle()
       call(calls, 0).answer(ok(call(calls, 0).urls, pendingFor(each => each === url(1))))
       await settle()
@@ -359,7 +424,7 @@ describe('createPreviewLoader', () => {
       expect(timers).toHaveLength(1)
       // Nothing stopped: the rest carries on.
       expect(loader.state(url(2)).kind).toBe('ready')
-      loader.request([url(3)])
+      loader.request(items([url(3)]))
       await settle()
       expect(call(calls, 2).urls).toEqual([url(3)])
     })
@@ -374,7 +439,7 @@ describe('createPreviewLoader', () => {
     it('still retries a rate-limited URL after its pending retry was used', async () => {
       const { calls, loader, timers } = harness()
 
-      loader.request([url(1)])
+      loader.request(items([url(1)]))
       await settle()
       call(calls, 0).answer(ok([url(1)], () => 'pending'))
       await settle()
@@ -397,7 +462,7 @@ describe('createPreviewLoader', () => {
     it('still gives a rate-limited URL its busy retry afterwards', async () => {
       const { calls, loader, timers } = harness()
 
-      loader.request([url(1)])
+      loader.request(items([url(1)]))
       await settle()
       call(calls, 0).answer(ok([url(1)], () => 'rate_limited', { retry_after_seconds: 3 }))
       await settle()
@@ -418,7 +483,7 @@ describe('createPreviewLoader', () => {
     it('does not stop the loader when a URL that used its busy retry is limited for the first time', async () => {
       const { calls, loader, record, timers } = harness()
 
-      loader.request([url(1), url(2)])
+      loader.request(items([url(1), url(2)]))
       await settle()
       call(calls, 0).answer({
         data: { previews: [{ retry: true, status: 'no_data', url: url(1) }, { site_name: 'Two', status: 'ok', url: url(2) }] },
@@ -432,10 +497,32 @@ describe('createPreviewLoader', () => {
       await settle()
 
       expect(record).not.toHaveBeenCalledWith('previews:stopped', expect.anything())
-      loader.request([url(3)])
+      loader.request(items([url(3)]))
       timers.at(-1)?.fire()
       await settle()
       expect(calls.length).toBeGreaterThan(2)
+    })
+  })
+
+  describe('a bookmark without a token', () => {
+    it('is not asked about, and holds no queue place', async () => {
+      const { calls, loader } = harness()
+
+      loader.request([{ token: '', url: url(0) }, { token: tokenOf(url(1)), url: url(1) }])
+      await settle()
+
+      expect(call(calls, 0).urls).toEqual([url(1)])
+    })
+
+    it('keeps the token a URL first came with', async () => {
+      const { calls, loader } = harness()
+
+      loader.request([{ token: tokenOf(url(0)), url: url(0) }])
+      loader.request([{ token: 'another', url: url(0) }])
+      await settle()
+
+      // The harness checks the token sent is the first one.
+      expect(call(calls, 0).urls).toEqual([url(0)])
     })
   })
 
@@ -445,7 +532,7 @@ describe('createPreviewLoader', () => {
       const listener = vi.fn()
       loader.subscribe(listener)
 
-      loader.request(urls(12))
+      loader.request(items(urls(12)))
       await settle()
       call(calls, 0).answer({ reason: 'no-capability', status: 'unavailable' })
       await settle()
@@ -457,7 +544,7 @@ describe('createPreviewLoader', () => {
       expect(listener).toHaveBeenCalledOnce()
       expect(record).toHaveBeenCalledWith('previews:stopped', 'no-capability')
 
-      loader.request(urls(3, 20))
+      loader.request(items(urls(3, 20)))
       await settle()
       expect(calls).toHaveLength(1)
     })
@@ -465,7 +552,7 @@ describe('createPreviewLoader', () => {
     it('keeps the previews it already has', async () => {
       const { calls, loader } = harness()
 
-      loader.request(urls(9))
+      loader.request(items(urls(9)))
       await settle()
       call(calls, 0).answer(ok(call(calls, 0).urls))
       await settle()
@@ -483,7 +570,7 @@ describe('createPreviewLoader', () => {
     it('pauses for as long as the tool says, then asks about those URLs once more', async () => {
       const { calls, loader, timers } = harness()
 
-      loader.request(urls(12))
+      loader.request(items(urls(12)))
       await settle()
       call(calls, 0).answer(ok(call(calls, 0).urls, limitedFrom(3), { retry_after_seconds: 7 }))
       await settle()
@@ -512,11 +599,11 @@ describe('createPreviewLoader', () => {
     it('queues requests made during the wait behind the retry', async () => {
       const { calls, loader, timers } = harness()
 
-      loader.request(urls(2))
+      loader.request(items(urls(2)))
       await settle()
       call(calls, 0).answer(ok(call(calls, 0).urls, limitedFrom(1)))
       await settle()
-      loader.request([url(50)])
+      loader.request(items([url(50)]))
       await settle()
       expect(calls).toHaveLength(1)
 
@@ -528,7 +615,7 @@ describe('createPreviewLoader', () => {
     it('waits thirty seconds when the tool names no wait', async () => {
       const { calls, loader, timers } = harness()
 
-      loader.request([url(1)])
+      loader.request(items([url(1)]))
       await settle()
       call(calls, 0).answer(ok([url(1)], () => 'rate_limited'))
       await settle()
@@ -539,7 +626,7 @@ describe('createPreviewLoader', () => {
     it('gives up quietly when the retry is rate-limited too', async () => {
       const { calls, loader, record, timers } = harness()
 
-      loader.request(urls(12))
+      loader.request(items(urls(12)))
       await settle()
       call(calls, 0).answer(ok(call(calls, 0).urls, limitedFrom(3)))
       await settle()
@@ -560,7 +647,7 @@ describe('createPreviewLoader', () => {
     it('retries a URL limited for the first time in a later batch', async () => {
       const { calls, loader, timers } = harness()
 
-      loader.request([url(1)])
+      loader.request(items([url(1)]))
       await settle()
       call(calls, 0).answer(ok([url(1)], () => 'rate_limited'))
       await settle()
@@ -569,7 +656,7 @@ describe('createPreviewLoader', () => {
       call(calls, 1).answer(ok([url(1)]))
       await settle()
 
-      loader.request([url(2)])
+      loader.request(items([url(2)]))
       await settle()
       call(calls, 2).answer(ok([url(2)], () => 'rate_limited'))
       await settle()
@@ -597,7 +684,7 @@ describe('createPreviewLoader', () => {
     it('draws what arrived at once, and asks about that URL once more a few seconds on', async () => {
       const { calls, loader, record, timers } = harness()
 
-      loader.request(urls(3))
+      loader.request(items(urls(3)))
       await settle()
       call(calls, 0).answer(busy(call(calls, 0).urls, each => each === url(1)))
       await settle()
@@ -622,7 +709,7 @@ describe('createPreviewLoader', () => {
     it('does not hold up the rest of the queue while it waits', async () => {
       const { calls, loader } = harness()
 
-      loader.request(urls(10))
+      loader.request(items(urls(10)))
       await settle()
       call(calls, 0).answer(busy(call(calls, 0).urls, () => true))
       await settle()
@@ -634,7 +721,7 @@ describe('createPreviewLoader', () => {
     it('asks at most once more per URL, and lets the second answer stand', async () => {
       const { calls, loader, timers } = harness()
 
-      loader.request([url(1)])
+      loader.request(items([url(1)]))
       await settle()
       call(calls, 0).answer(busy([url(1)], () => true))
       await settle()
@@ -647,7 +734,7 @@ describe('createPreviewLoader', () => {
       expect(calls).toHaveLength(2)
       expect(loader.state(url(1)).kind).toBe('ready')
       // And the card asking again changes nothing.
-      loader.request([url(1)])
+      loader.request(items([url(1)]))
       await settle()
       expect(calls).toHaveLength(2)
     })
@@ -658,7 +745,7 @@ describe('createPreviewLoader', () => {
     ])('keeps what the first answer gave if the second %s', async (_name, second) => {
       const { calls, loader, timers } = harness()
 
-      loader.request([url(1)])
+      loader.request(items([url(1)]))
       await settle()
       call(calls, 0).answer(busy([url(1)], () => true))
       await settle()
@@ -671,7 +758,7 @@ describe('createPreviewLoader', () => {
       expect(state.kind === 'ready' && state.preview.siteName).toBe('Text only')
       // Nothing held, nothing stopped: a later row still loads.
       expect(timers).toHaveLength(1)
-      loader.request([url(2)])
+      loader.request(items([url(2)]))
       await settle()
       expect(call(calls, 2).urls).toEqual([url(2)])
     })
@@ -679,7 +766,7 @@ describe('createPreviewLoader', () => {
     it('does not ask again once the loader has stopped', async () => {
       const { calls, loader, timers } = harness()
 
-      loader.request(urls(9))
+      loader.request(items(urls(9)))
       await settle()
       call(calls, 0).answer(busy(call(calls, 0).urls, each => each === url(0)))
       await settle()
@@ -699,12 +786,12 @@ describe('createPreviewLoader', () => {
       const listener = vi.fn()
       loader.subscribe(listener)
 
-      loader.request(urls(9))
+      loader.request(items(urls(9)))
       await settle()
       loader.dispose()
       call(calls, 0).answer(ok(call(calls, 0).urls))
       await settle()
-      loader.request([url(40)])
+      loader.request(items([url(40)]))
       await settle()
 
       expect(calls).toHaveLength(1)
@@ -716,7 +803,7 @@ describe('createPreviewLoader', () => {
     it('does not retry after a wait that outlives it', async () => {
       const { calls, loader, timers } = harness()
 
-      loader.request([url(1)])
+      loader.request(items([url(1)]))
       await settle()
       call(calls, 0).answer(ok([url(1)], () => 'rate_limited'))
       await settle()

@@ -29,9 +29,9 @@ import { chromium } from 'playwright-core'
 
 import type { CardName } from './build-cards.ts'
 
-import type { PreviewScenario } from '../fixtures/index.ts'
+import type { PreviewRequestItem, PreviewScenario } from '../fixtures/index.ts'
 
-import { answerPreviews, CARD_FIXTURES } from '../fixtures/index.ts'
+import { answerPreviews, CARD_FIXTURES, previewText, verifiedUrls } from '../fixtures/index.ts'
 import { generatedPath } from './build-cards.ts'
 
 const cardsRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
@@ -71,9 +71,13 @@ export interface RenderOptions {
 
 /** One tool call the card made through the host, as the browser checks read it back. */
 export interface RecordedToolCall {
-  readonly arguments?: { readonly urls?: readonly string[] }
+  readonly arguments?: { readonly items?: ReadonlyArray<{ readonly token?: string, readonly url?: string }> }
   readonly name: string
 }
+
+/** The URLs one recorded call asked about, in order. */
+export const askedUrls = (call: RecordedToolCall | undefined): string[] =>
+  (call?.arguments?.items ?? []).map(item => item.url ?? '')
 
 const HOST_SCRIPT = `
 import { AppBridge, PostMessageTransport } from '@modelcontextprotocol/ext-apps/app-bridge'
@@ -231,17 +235,24 @@ export const renderCard = async (browser: Browser, options: RenderOptions): Prom
   })
   const { previewDelayMs = 0, previews } = options
   if (previews !== undefined) {
-    await page.exposeFunction('__answerToolCall__', async (name: string, toolArguments: { urls?: readonly string[] }, callNumber: number) => {
+    await page.exposeFunction('__answerToolCall__', async (name: string, toolArguments: { items?: readonly PreviewRequestItem[] }, callNumber: number) => {
       if (previewDelayMs > 0) await new Promise(resolve => setTimeout(resolve, previewDelayMs))
       if (previews === 'rejected') return { error: 'Tool calls are not permitted for this app' }
       if (name !== 'get_link_previews') return { error: `Unknown tool: ${name}` }
       const scenario = (previews === 'rate-limited' || previews === 'busy' || previews === 'pending') && callNumber > 1 ? 'ok' : previews
-      const structuredContent = answerPreviews(scenario, toolArguments.urls ?? [])
-      // As the server answers: the data once, and a line of text beside it.
-      const entries = (structuredContent['previews'] ?? []) as ReadonlyArray<{ readonly status?: unknown }>
-      const found = entries.filter(entry => entry.status === 'ok').length
-      const text = `Link previews for the bookmarks card: ${String(found)} of ${String(entries.length)} found.`
-      return { result: { content: [{ text, type: 'text' }], structuredContent } }
+      // As the server answers: only an item carrying the token its URL was
+      // sent with is looked up, and any other is that item's own error.
+      const items = toolArguments.items ?? []
+      const verified = new Set(verifiedUrls(items))
+      const urls = items.map(item => typeof item.url === 'string' ? item.url : '')
+      const looked = answerPreviews(scenario, urls.filter(url => verified.has(url)))
+      const found = (looked['previews'] ?? []) as ReadonlyArray<{ readonly url?: unknown }>
+      const refused = (url: string): Record<string, unknown> => ({ description: null, favicon: null, image: null, site_name: null, status: 'error', theme_color: null, title: null, url })
+      const structuredContent = scenario === 'hostile'
+        ? looked
+        : { ...looked, previews: urls.map(url => found.find(entry => entry.url === url) ?? refused(url)) }
+      // The data once, and the same result as text without its images.
+      return { result: { content: [{ text: previewText(structuredContent), type: 'text' }], structuredContent } }
     })
   }
   await page.setContent(await hostPage(options))

@@ -187,7 +187,7 @@ describe('readPreviews', () => {
       expect(previews.filter(preview => preview.image !== undefined)).toHaveLength(2)
       for (const preview of previews) {
         for (const image of [preview.image, preview.favicon]) {
-          if (image !== undefined) expect(image.src).toMatch(/^data:image\/(webp|png|jpeg);base64,[A-Za-z0-9+/]+={0,2}$/)
+          if (image !== undefined) expect(image.src).toMatch(/^data:image\/(webp|png);base64,[A-Za-z0-9+/]+={0,2}$/)
         }
       }
       // Markup stays a string; the card renders it as text.

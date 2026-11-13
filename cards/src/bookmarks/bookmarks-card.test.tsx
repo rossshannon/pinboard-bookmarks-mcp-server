@@ -5,7 +5,7 @@ import type { PreviewScenario } from '../../fixtures/index.ts'
 import type { CardRenderContext } from '../shell/card-shell.tsx'
 import type { ToolCallOutcome } from '../shell/tool-caller.ts'
 
-import { answerPreviews, fixtureData, fixtureError } from '../../fixtures/index.ts'
+import { answerPreviews, fixtureData, fixtureError, previewItems } from '../../fixtures/index.ts'
 import { stubContext } from '../../test-support/context.ts'
 import { BookmarksCard, INITIAL_ROWS } from './bookmarks-card.tsx'
 
@@ -223,14 +223,18 @@ describe('BookmarksCard', () => {
   })
 })
 
+/** The URLs of one call's items. */
+const urlsIn = (toolArguments: Record<string, unknown>): string[] =>
+  (toolArguments['items'] as Array<{ url: string }>).map(item => item.url)
+
 /** Everything the card asked the tool about, call by call. */
 const askedOf = (callTool: CardRenderContext['callTool']): string[][] =>
-  vi.mocked(callTool).mock.calls.map(([, toolArguments]) => toolArguments['urls'] as string[])
+  vi.mocked(callTool).mock.calls.map(([, toolArguments]) => urlsIn(toolArguments))
 
 /** A context whose host can call tools, answering `get_link_previews` from a preview fixture. */
 const previewContext = (scenario: PreviewScenario, overrides: Partial<CardRenderContext> = {}): CardRenderContext => stubContext({
   callTool: vi.fn<CardRenderContext['callTool']>((_name, toolArguments) =>
-    Promise.resolve({ data: answerPreviews(scenario, toolArguments['urls'] as string[]), status: 'ok' })),
+    Promise.resolve({ data: answerPreviews(scenario, urlsIn(toolArguments)), status: 'ok' })),
   canCallTools: () => true,
   ...overrides,
 })
@@ -297,7 +301,7 @@ describe('BookmarksCard link previews', () => {
       renderScenario('rich', context)
       await settle()
 
-      expect(context.callTool).toHaveBeenCalledExactlyOnceWith('get_link_previews', { urls: urlsOf('rich') })
+      expect(context.callTool).toHaveBeenCalledExactlyOnceWith('get_link_previews', { items: previewItems(urlsOf('rich')) })
     })
 
     it('holds the thumbnail’s place on every row while the answer is on its way', () => {
@@ -419,7 +423,7 @@ describe('BookmarksCard link previews', () => {
   describe('what a page calls itself', () => {
     const withSiteName = (siteName: unknown): CardRenderContext => previewContext('ok', {
       callTool: vi.fn<CardRenderContext['callTool']>((_name, toolArguments) => Promise.resolve({
-        data: { previews: (toolArguments['urls'] as string[]).map(url => ({ site_name: siteName, status: 'ok', url })) },
+        data: { previews: (urlsIn(toolArguments)).map(url => ({ site_name: siteName, status: 'ok', url })) },
         status: 'ok',
       })),
     })
@@ -430,6 +434,9 @@ describe('BookmarksCard link previews', () => {
       ['the host with www.', 'www.robinsloan.com'],
       ['some other host', 'paypal.com'],
       ['some other host, dressed up', 'accounts.google.com'],
+      ['some other host with a slash', 'paypal.com/'],
+      ['a URL', 'https://paypal.com/'],
+      ['some other host among other words', 'paypal.com – Secure login'],
     ])('is not shown when it is %s', async (_name, siteName) => {
       renderScenario('rich', withSiteName(siteName))
       await settle()
@@ -440,17 +447,63 @@ describe('BookmarksCard link previews', () => {
     })
 
     it('is shown beside the host, never in place of it', async () => {
-      renderScenario('rich', withSiteName('PayPal — Secure Login'))
+      renderScenario('rich', withSiteName('Acme — Secure Login'))
       await settle()
 
       for (const each of rows()) {
-        expect(each.querySelector('.bookmark__site')).toHaveTextContent('PayPal — Secure Login')
+        expect(each.querySelector('.bookmark__site')).toHaveTextContent('Acme — Secure Login')
         expect(each.querySelector('.bookmark__host')?.textContent).toMatch(/^[a-z0-9.-]+$/)
         // The name first, then the host, then the date.
-        const [site, host] = each.querySelectorAll('.bookmark__source > span:not(.favicon)')
+        const [site, host, date] = each.querySelectorAll('.bookmark__where > *')
         expect(site).toHaveClass('bookmark__site')
         expect(host).toHaveClass('bookmark__host')
+        expect(date?.tagName).toBe('TIME')
       }
+    })
+
+    it('draws the deceptive-host fixture with each row’s real host, whole, and only the innocent name', async () => {
+      renderScenario('deceptive-host', previewContext('ok'))
+      await settle()
+
+      expect(rows().map(each => each.querySelector('.bookmark__host')?.textContent)).toEqual([
+        'accounts.google.com.security-check.evil.example',
+        'paypal.com.account-verify.example',
+      ])
+      expect(row(0).querySelector('.bookmark__site')).toHaveTextContent('Account security')
+      expect(row(1).querySelector('.bookmark__site')).toBeNull()
+      expect(row(1)).not.toHaveTextContent('Secure login')
+    })
+  })
+
+  describe('a bookmark the server sent no token for', () => {
+    it('is not asked about, and holds no place, while its neighbours are', async () => {
+      const data = fixtureData('bookmarks', 'rich')
+      const bookmarks = (data['bookmarks'] as Array<Record<string, unknown>>).map((bookmark, index) => {
+        if (index === 1) return { ...bookmark, preview_token: undefined }
+        if (index === 2) return { ...bookmark, preview_token: 42 }
+        if (index === 3) return { ...bookmark, preview_token: '' }
+        return bookmark
+      })
+      const context = previewContext('ok')
+      render(<BookmarksCard context={context} data={{ ...data, bookmarks }} />)
+      await settle()
+
+      expect(askedOf(context.callTool)).toEqual([[0, 4, 5].map(index => urlsOf('rich')[index])])
+      for (const index of [1, 2, 3]) {
+        expect(row(index).querySelector('.bookmark__thumb')).toBeNull()
+        expect(row(index).querySelector('img')).toBeNull()
+      }
+      expect(row(0).querySelector('.bookmark__thumb img')).not.toBeNull()
+    })
+
+    it('sends each bookmark’s own token back with its URL', async () => {
+      const context = previewContext('ok')
+      renderScenario('rich', context)
+      await settle()
+
+      const [, sent] = vi.mocked(context.callTool).mock.calls[0] ?? []
+      const rowsSent = fixtureData('bookmarks', 'rich')['bookmarks'] as Array<{ preview_token: string, url: string }>
+      expect(sent).toEqual({ items: rowsSent.map(bookmark => ({ token: bookmark.preview_token, url: bookmark.url })) })
     })
   })
 
@@ -481,7 +534,7 @@ describe('BookmarksCard link previews', () => {
       let connected = false
       const { connect, context } = connectable({
         callTool: vi.fn<CardRenderContext['callTool']>((_name, toolArguments) => Promise.resolve(connected
-          ? { data: answerPreviews('ok', toolArguments['urls'] as string[]), status: 'ok' }
+          ? { data: answerPreviews('ok', urlsIn(toolArguments)), status: 'ok' }
           : { reason: 'rejected-before-connect', status: 'unavailable' })),
       })
       const { container } = renderScenario('rich', context)
@@ -497,6 +550,31 @@ describe('BookmarksCard link previews', () => {
       expect(askedOf(context.callTool)).toEqual([urlsOf('rich'), urlsOf('rich')])
       expect(container.querySelectorAll('.bookmark__thumb img')).toHaveLength(5)
       expect(container.querySelector('.bookmark__thumb--pending')).toBeNull()
+    })
+
+    it('asks again when the bridge connected before the early call came back refused', async () => {
+      // ChatGPT's usual order: connect first, then the refusal of the call
+      // that went out before it.
+      let refuse: (outcome: ToolCallOutcome) => void = () => undefined
+      const { connect, context } = connectable({
+        callTool: vi.fn<CardRenderContext['callTool']>()
+          .mockImplementationOnce(() => new Promise((resolve) => {
+            refuse = resolve
+          }))
+          .mockImplementation((_name, toolArguments) => Promise.resolve({ data: answerPreviews('ok', urlsIn(toolArguments)), status: 'ok' })),
+      })
+      const { container } = renderScenario('rich', context)
+      await settle()
+      expect(context.callTool).toHaveBeenCalledOnce()
+
+      connect()
+      await settle()
+      expect(context.callTool).toHaveBeenCalledOnce()
+      refuse({ reason: 'rejected-before-connect', status: 'unavailable' })
+      await settle()
+
+      expect(askedOf(context.callTool)).toEqual([urlsOf('rich'), urlsOf('rich')])
+      expect(container.querySelectorAll('.bookmark__thumb img')).toHaveLength(5)
     })
 
     it('stays settled when the host that connects refuses too', async () => {
@@ -527,7 +605,7 @@ describe('BookmarksCard link previews', () => {
       connect()
       await settle()
 
-      expect(context.callTool).toHaveBeenCalledExactlyOnceWith('get_link_previews', { urls: urlsOf('rich') })
+      expect(context.callTool).toHaveBeenCalledExactlyOnceWith('get_link_previews', { items: previewItems(urlsOf('rich')) })
       expect(container.querySelectorAll('.bookmark__thumb img')).toHaveLength(5)
     })
   })
@@ -540,7 +618,7 @@ describe('BookmarksCard link previews', () => {
         const context = previewContext('ok', {
           callTool: vi.fn<CardRenderContext['callTool']>((_name, toolArguments) => {
             calls += 1
-            return Promise.resolve({ data: answerPreviews(calls === 1 ? 'pending' : 'ok', toolArguments['urls'] as string[]), status: 'ok' })
+            return Promise.resolve({ data: answerPreviews(calls === 1 ? 'pending' : 'ok', urlsIn(toolArguments)), status: 'ok' })
           }),
         })
         const { container } = renderScenario('rich', context)
@@ -594,7 +672,7 @@ describe('BookmarksCard link previews', () => {
       await settle()
 
       for (const image of container.querySelectorAll('img')) {
-        expect(image.getAttribute('src')).toMatch(/^data:image\/(webp|png|jpeg);base64,[A-Za-z0-9+/]+={0,2}$/)
+        expect(image.getAttribute('src')).toMatch(/^data:image\/(webp|png);base64,[A-Za-z0-9+/]+={0,2}$/)
         expect(image.getAttributeNames().toSorted()).toEqual(['alt', 'class', 'decoding', 'draggable', 'height', 'src', 'width'].filter(name => name !== 'class' || image.hasAttribute('class')))
       }
       // Only the one honest entry among the six rows has pictures.
@@ -649,7 +727,7 @@ describe('BookmarksCard link previews', () => {
         const context = previewContext('ok', {
           callTool: vi.fn<CardRenderContext['callTool']>((_name, toolArguments) => {
             calls += 1
-            return Promise.resolve({ data: answerPreviews(calls === 1 ? 'rate-limited' : 'ok', toolArguments['urls'] as string[]), status: 'ok' })
+            return Promise.resolve({ data: answerPreviews(calls === 1 ? 'rate-limited' : 'ok', urlsIn(toolArguments)), status: 'ok' })
           }),
         })
         const { container } = renderScenario('rich', context)
@@ -711,7 +789,7 @@ describe('BookmarksCard link previews', () => {
         const context = previewContext('ok', {
           callTool: vi.fn<CardRenderContext['callTool']>((_name, toolArguments) => {
             calls += 1
-            return Promise.resolve({ data: answerPreviews(calls === 1 ? 'busy' : 'ok', toolArguments['urls'] as string[]), status: 'ok' })
+            return Promise.resolve({ data: answerPreviews(calls === 1 ? 'busy' : 'ok', urlsIn(toolArguments)), status: 'ok' })
           }),
         })
         const { container } = renderScenario('rich', context)

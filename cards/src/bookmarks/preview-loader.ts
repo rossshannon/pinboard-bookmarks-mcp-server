@@ -3,9 +3,12 @@
  * `get_link_previews` tool about, when, and what came back. No React and no
  * DOM, so the rules are testable as rules:
  *
- * - URLs are asked about in batches of at most eight, one batch in flight at
- *   a time, in the order they were requested. Requests made in the same tick
- *   (a card's first eight rows mounting) go out as one batch.
+ * - Bookmarks are asked about in batches of at most eight, one batch in
+ *   flight at a time, in the order they were requested. Requests made in the
+ *   same tick (a card's first eight rows mounting) go out as one batch.
+ * - Each is asked about as the server's own pair: its URL and the
+ *   `preview_token` the server sent with it. The tool looks up nothing else,
+ *   so a bookmark that came without a token is not asked about.
  * - A URL is asked about once. Its answer, a preview or nothing, is kept for
  *   the life of the card.
  * - If the tool says the bridge's rate limit was reached, the queue pauses
@@ -25,11 +28,22 @@
  * - If a call comes back "unavailable" the loader stops, with one exception.
  *   Stopped, every URL without an answer has none, and the card settles to
  *   the rows it would have drawn anyway.
- * - The exception: a call that failed only because the bridge had not
- *   connected yet (`not-connected`, `rejected-before-connect`) suspends the
- *   loader instead. It looks stopped, but keeps its queue, and `resume()`,
- *   which the card calls when the bridge does connect, sets it going again.
- *   Once: unavailable after that is final.
+ * - The exception: a call that failed only for want of a bridge
+ *   (`not-connected`, `rejected-before-connect`). If the bridge has connected
+ *   since that call was sent, the batch is sent again at once, down the
+ *   bridge. If it has not, the loader is suspended: it looks stopped, but
+ *   keeps its queue, and carries on when the card says the bridge has
+ *   connected (`connected()`). A connect is remembered whenever it comes, so
+ *   one that lands while the first call is still in flight is not lost. A
+ *   call sent after the connect that still finds no way through is final.
+ *
+ * The loader is in exactly one phase at a time:
+ *
+ *   idle ──request──▶ calling ──answer──▶ idle
+ *                        │ ├─ rate-limited ─▶ waiting ──timer──▶ idle
+ *                        │ ├─ no bridge yet ─▶ suspended ──connected()──▶ idle
+ *                        │ └─ unavailable ──▶ stopped
+ *   any ──dispose()──▶ disposed
  */
 
 import type { ToolCaller } from '../shell/tool-caller.ts'
@@ -71,6 +85,22 @@ export const isPreviewableUrl = (url: string): boolean => {
 /** Reasons a call was unavailable that the bridge connecting may yet cure. */
 const NOT_FINAL: ReadonlySet<string> = new Set(['not-connected', 'rejected-before-connect'])
 
+/** A bookmark to ask about: its URL and the token the server sent with it. */
+export interface PreviewItem {
+  readonly url: string
+  readonly token: string
+}
+
+/**
+ * Where the loader is. `calling` has a batch in flight; `waiting` is sitting
+ * out the bridge's rate limit; `suspended` is waiting for a bridge to call
+ * through; `stopped` and `disposed` are for good.
+ */
+type Phase = 'calling' | 'disposed' | 'idle' | 'stopped' | 'suspended' | 'waiting'
+
+/** The three ways an answer can ask to be asked again. Each URL gets one of each. */
+type RetryKind = 'busy' | 'pending' | 'rate-limited'
+
 export type PreviewState =
   /** Not asked about yet, or the answer is on its way: worth holding a place for. */
   | { readonly kind: 'pending' }
@@ -90,41 +120,37 @@ export interface PreviewLoaderOptions {
 }
 
 export interface PreviewLoader {
-  /** Queue these URLs, in this order, skipping any already asked about and any the tool would refuse. */
-  readonly request: (urls: readonly string[]) => void
+  /** Queue these bookmarks, in this order, skipping any already asked about and any the tool would refuse. */
+  readonly request: (items: readonly PreviewItem[]) => void
   readonly state: (url: string) => PreviewState
   /** Call `listener` whenever any URL's state changes; returns the unsubscribe. */
   readonly subscribe: (listener: () => void) => () => void
   /** Bumps on every change: a snapshot for `useSyncExternalStore`. */
   readonly version: () => number
   /**
-   * The bridge has connected: if the loader was suspended for want of it,
-   * carry on from where it left off. Does nothing otherwise.
+   * The bridge has connected. Remembered from then on; and if the loader was
+   * suspended for want of it, it carries on from where it left off.
    */
-  readonly resume: () => void
+  readonly connected: () => void
   /** Stop for good: nothing further is sent, and nothing more changes. */
   readonly dispose: () => void
 }
 
 export const createPreviewLoader = ({ callTool, record = () => undefined, setTimer = setTimeout }: PreviewLoaderOptions): PreviewLoader => {
   const settled = new Map<string, PreviewState>()
+  /** The token each requested URL came with. */
+  const tokens = new Map<string, string>()
   /** Everything requested and not yet settled, queued or in flight. */
   const asked = new Set<string>()
   const queue: string[] = []
-  // One second chance of each kind per URL, counted apart: using one must
-  // not use up another.
-  const rateRetried = new Set<string>()
-  const busyRetried = new Set<string>()
-  const pendingRetried = new Set<string>()
+  const retried: Readonly<Record<RetryKind, Set<string>>> = { 'busy': new Set(), 'pending': new Set(), 'rate-limited': new Set() }
   const listeners = new Set<() => void>()
   let version = 0
-  let busy = false
-  let paused = false
-  let stopped = false
-  let suspended = false
-  let resumed = false
-  let disposed = false
-  let pumpScheduled = false
+  let phase: Phase = 'idle'
+  /** Whether the bridge is known to have connected. A fact, not a phase: it is true in any of them. */
+  let bridgeConnected = false
+
+  const over = (): boolean => phase === 'stopped' || phase === 'disposed'
 
   const changed = (): void => {
     version += 1
@@ -132,28 +158,54 @@ export const createPreviewLoader = ({ callTool, record = () => undefined, setTim
   }
 
   const stop = (why: string): void => {
-    stopped = true
+    phase = 'stopped'
     queue.length = 0
     asked.clear()
     record('previews:stopped', why)
   }
 
+  /**
+   * Give these URLs their one second chance of this kind: `again` puts them
+   * back in the queue after `delayMs`, unless the loader has finished by
+   * then. Returns the URLs that had already used theirs, for the caller to
+   * settle its own way.
+   */
+  const retryOnce = (kind: RetryKind, urls: readonly string[], delayMs: number, again: (fresh: readonly string[]) => void): readonly string[] => {
+    const fresh = urls.filter(url => !retried[kind].has(url))
+    if (fresh.length > 0) {
+      for (const url of fresh) retried[kind].add(url)
+      record(`previews:${kind}`, `${String(fresh.length)} again in ${String(delayMs)}ms`)
+      setTimer(() => {
+        if (over()) return
+        again(fresh)
+        void pump()
+      }, delayMs)
+    }
+    return urls.filter(url => !fresh.includes(url))
+  }
+
   const pump = async (): Promise<void> => {
-    pumpScheduled = false
-    if (busy || paused || stopped || suspended || disposed || queue.length === 0) return
-    busy = true
+    if (phase !== 'idle' || queue.length === 0) return
+    phase = 'calling'
     const batch = queue.splice(0, PREVIEW_BATCH_SIZE)
+    const sentWithBridge = bridgeConnected
     record('previews:batch', String(batch.length))
-    const outcome = await callTool(PREVIEW_TOOL, { urls: batch })
-    busy = false
-    if (disposed) return
+    const outcome = await callTool(PREVIEW_TOOL, { items: batch.map(url => ({ token: tokens.get(url) ?? '', url })) })
+    if (phase !== 'calling') return
+    phase = 'idle'
 
     if (outcome.status === 'unavailable') {
-      if (!resumed && NOT_FINAL.has(outcome.reason)) {
-        // Not a refusal, only no way through yet. The batch goes back to the
-        // head of the queue for `resume()`.
-        suspended = true
+      if (NOT_FINAL.has(outcome.reason) && !sentWithBridge) {
+        // Not a refusal, only no way through when it was sent. The batch goes
+        // back to the head of the queue: for now, if the bridge has connected
+        // in the meantime, and otherwise for when it does.
         queue.unshift(...batch)
+        if (bridgeConnected) {
+          record('previews:resent', outcome.reason)
+          void pump()
+          return
+        }
+        phase = 'suspended'
         record('previews:suspended', outcome.reason)
       }
       else {
@@ -171,19 +223,12 @@ export const createPreviewLoader = ({ callTool, record = () => undefined, setTim
       settled.set(url, preview === undefined ? NONE : { kind: 'ready', preview })
     }
     // A busy bridge: the row keeps what it was just given, and the URL goes
-    // round once more after a short wait. The queue is not paused for it;
+    // round once more after a short wait. The queue is not held for it;
     // other rows have no reason to wait on this one's thumbnail.
-    const unfinished = reply.busy.filter(url => !busyRetried.has(url))
-    if (unfinished.length > 0) {
-      for (const url of unfinished) busyRetried.add(url)
-      record('previews:busy', `${String(unfinished.length)} again in ${String(BUSY_RETRY_DELAY_MS)}ms`)
-      setTimer(() => {
-        if (stopped || disposed) return
-        for (const url of unfinished) asked.add(url)
-        queue.push(...unfinished)
-        void pump()
-      }, BUSY_RETRY_DELAY_MS)
-    }
+    retryOnce('busy', reply.busy, BUSY_RETRY_DELAY_MS, (fresh) => {
+      for (const url of fresh) asked.add(url)
+      queue.push(...fresh)
+    })
     // A URL that already has an answer (a busy retry that met the rate limit
     // or the deadline) keeps it; only rows still waiting go round again.
     const stillWaiting = (url: string): boolean => {
@@ -193,76 +238,65 @@ export const createPreviewLoader = ({ callTool, record = () => undefined, setTim
     }
     // Still running on the server, which finishes the lookup whether or not
     // anyone is waiting: the row keeps its place, and one more ask a few
-    // seconds on usually finds the answer cached. The queue is not paused.
-    const running = reply.pending.filter(stillWaiting)
-    const askAgain = running.filter(url => !pendingRetried.has(url))
-    for (const url of running) {
-      if (askAgain.includes(url)) continue
+    // seconds on usually finds the answer cached. The queue is not held.
+    const stillPending = retryOnce('pending', reply.pending.filter(stillWaiting), PENDING_RETRY_DELAY_MS, (fresh) => {
+      queue.push(...fresh)
+    })
+    for (const url of stillPending) {
       asked.delete(url)
       settled.set(url, NONE)
     }
-    if (askAgain.length > 0) {
-      for (const url of askAgain) pendingRetried.add(url)
-      record('previews:pending', `${String(askAgain.length)} again in ${String(PENDING_RETRY_DELAY_MS)}ms`)
-      setTimer(() => {
-        if (stopped || disposed) return
-        queue.push(...askAgain)
-        void pump()
-      }, PENDING_RETRY_DELAY_MS)
-    }
+    // The bridge's rate limit: those URLs go to the head of the queue, and
+    // the whole queue waits the limit out.
     const limited = reply.rateLimited.filter(stillWaiting)
-    const again = limited.filter(url => !rateRetried.has(url))
-    if (again.length < limited.length) {
+    if (limited.some(url => retried['rate-limited'].has(url))) {
       // Limited twice running: the wait was not enough, so give up quietly.
       stop('rate-limited')
       changed()
       return
     }
-    if (again.length > 0) {
-      for (const url of again) rateRetried.add(url)
-      queue.unshift(...again)
-      paused = true
-      record('previews:rate-limited', `${String(again.length)} held ${String(reply.retryAfterMs)}ms`)
-      setTimer(() => {
-        paused = false
-        void pump()
-      }, reply.retryAfterMs)
+    retryOnce('rate-limited', limited, reply.retryAfterMs, () => {
+      if (phase === 'waiting') phase = 'idle'
+    })
+    if (limited.length > 0) {
+      queue.unshift(...limited)
+      phase = 'waiting'
     }
     changed()
     void pump()
   }
 
   return {
+    connected: () => {
+      bridgeConnected = true
+      if (phase !== 'suspended') return
+      phase = 'idle'
+      record('previews:resumed')
+      changed()
+      void pump()
+    },
     dispose: () => {
-      disposed = true
+      phase = 'disposed'
       listeners.clear()
     },
-    request: (urls) => {
-      if (stopped || disposed) return
+    request: (items) => {
+      if (over()) return
       let added = false
-      for (const url of urls) {
-        if (!isPreviewableUrl(url) || settled.has(url) || asked.has(url)) continue
+      for (const { token, url } of items) {
+        if (token === '' || !isPreviewableUrl(url) || settled.has(url) || asked.has(url)) continue
+        tokens.set(url, token)
         asked.add(url)
         queue.push(url)
         added = true
       }
       // A microtask later, so every request made in this tick shares a batch.
-      if (added && !pumpScheduled) {
-        pumpScheduled = true
+      if (added) {
         queueMicrotask(() => {
           void pump()
         })
       }
     },
-    resume: () => {
-      if (!suspended || stopped || disposed) return
-      suspended = false
-      resumed = true
-      record('previews:resumed')
-      changed()
-      void pump()
-    },
-    state: url => settled.get(url) ?? (stopped || suspended || disposed || !isPreviewableUrl(url) ? NONE : PENDING),
+    state: url => settled.get(url) ?? (over() || phase === 'suspended' || !isPreviewableUrl(url) ? NONE : PENDING),
     subscribe: (listener) => {
       listeners.add(listener)
       return () => {

@@ -236,29 +236,33 @@ describe('CardShell', () => {
     expect(lastContext().canCallTools()).toBe(false)
   })
 
-  it('tells the card when the bridge connects after a fast-path render, and can call tools by then', async () => {
+  it('sends a call ChatGPT’s own channel refused down the bridge when it connects, and tells the card', async () => {
     globalThis.openai = { callTool: vi.fn().mockRejectedValue(new Error('not for widgets')), toolOutput: { name: 'fast' } }
     renderShell()
     const connected = vi.fn(() => lastContext().canCallTools())
     lastContext().onConnect(connected)
 
-    let early: unknown
-    await act(async () => {
-      early = await lastContext().callTool('get_link_previews', { urls: [] })
+    let outcome: unknown
+    const pending = lastContext().callTool('get_link_previews', { items: [] }).then((result) => {
+      outcome = result
     })
-    expect(early).toEqual({ reason: 'rejected-before-connect', status: 'unavailable' })
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(100)
+    })
+    expect(outcome).toBeUndefined()
     expect(connected).not.toHaveBeenCalled()
+    expect(fakeApp.callServerTool).not.toHaveBeenCalled()
 
     connect()
+    await act(async () => {
+      await pending
+    })
 
-    // Told once, and by then the bridge is the channel.
+    // Told once, and the same call went down the bridge.
     expect(connected).toHaveBeenCalledOnce()
     expect(connected).toHaveReturnedWith(true)
-    let later: unknown
-    await act(async () => {
-      later = await lastContext().callTool('get_link_previews', { urls: [] })
-    })
-    expect(later).toEqual({ data: { answered: true }, status: 'ok' })
+    expect(outcome).toEqual({ data: { answered: true }, status: 'ok' })
+    expect(fakeApp.callServerTool).toHaveBeenCalledOnce()
   })
 
   it('renders window.openai.toolOutput at once, on the ChatGPT fast path', () => {
