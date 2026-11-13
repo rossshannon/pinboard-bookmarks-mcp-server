@@ -13,10 +13,10 @@ This is off by default. Turning it on sends the URLs of the bookmarks you view, 
 ### Changes
 
 - New optional environment variable: `PINBOARD_PREVIEW_BRIDGE_URL`
-- New app-only tool, `get_link_previews`, registered only when that variable is set and the result cards are on. Hosts without MCP Apps support may show it in the model's tool list
+- New app-only tool, `get_link_previews`, registered only when that variable is set and the result cards are on. Hosts without MCP Apps support may show it in the model's tool list. It only looks up URLs that a bookmark tool has returned since the server started
 - The four bookmark tools add `previews_available: true` to their results when previews are configured. Their results are otherwise unchanged
 - `httpx2` is now a direct dependency. FastMCP already installed it
-- The bookmarks card moves the site and date above the title, with a small tile for the site's initial where there is no favicon
+- The bookmarks card moves the site and date above the title, with a small tile for the site's initial where there is no favicon. The host a link goes to is always shown; a page's own site name appears beside it
 
 ---
 

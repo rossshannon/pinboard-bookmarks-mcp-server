@@ -51,6 +51,8 @@ Tools link to `ui://pinboard/<card>@<hash>` cards (see docs/mcp-apps-ui.md). The
 - When a tool's return shape changes, update `cards/fixtures/*.json` too; `tests/test_ui.py` fails when they drift
 - New tools get `meta=ui.tool_meta(<card>)` on their `@mcp.tool` decorator
 - A tool that exists for a card and not for the model (`get_link_previews`) gets `meta=ui.APP_ONLY_TOOL_META` instead, and a docstring that says it isn't useful to call directly, because hosts without MCP Apps still list it. A card calls it with `context.callTool(name, args)`, which never rejects
+- `get_link_previews` returns a FastMCP `ToolResult` (`structured_content` plus a one-line text block), not a dict, so its images aren't serialised twice. It is the one exception to the "return a dict" rule below
+- `get_link_previews` only looks up URLs the bookmark tools have returned (`main.offered_urls`). A new tool that returns bookmarks must go through `_bookmarks_result` so its URLs are recorded
 - When `get_link_previews`' return shape changes, update `cards/fixtures/previews.json` through `cards/scripts/make-preview-fixtures.ts` (`npm run fixtures:previews`); `tests/test_previews.py` fails when they drift
 - A card renders images only through `<SafeImage>` (inline raster `data:` URIs) and links only through `<SafeLink>`. Cards fetch nothing from the network
 - Check a visual change with `npm run capture` (screenshots in `cards/tmp/captures/`) and `npm run test:browser`

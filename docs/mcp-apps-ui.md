@@ -49,7 +49,7 @@ The design is a port of the &Open MCP server's card layer. The shell and sizing 
 - **Theme.** The card adopts the host's theme, its CSS variables (`--color-background-primary` and so on) and its fonts through ext-apps, and follows later changes to them. `card.css` defines `--pb-*` tokens that use the host's variable when there is one. Otherwise they fall back to OKLCH `light-dark()` values, so a host that sends only `theme`, or nothing at all, still looks right.
 - **Links.** `SafeLink` is the only place a card renders an `href`, and only for `http(s)`. The sandbox blocks navigation, so a click goes to the shell's link opener (`link-opener.ts`): a plain click, a Cmd-, Ctrl- or Shift-click, and a middle-click alike. Only an Alt-click, which browsers treat as "download", is left to the browser. Once the bridge is connected it sends `ui/open-link`. Before that it uses ChatGPT's `window.openai.openExternal` when that exists, and otherwise holds the click until the bridge connects. A bookmark with any other scheme shows its title as text.
 - **Errors.** A failed tool call renders an error block. A rejected token gets its own message that points at `PINBOARD_TOKEN`.
-- **Tool calls.** A card can call a server tool itself with `context.callTool(name, args)` (`tool-caller.ts`). The call goes through the host (`tools/call` over the bridge) and resolves to the tool's `structuredContent`. It never rejects. If the bridge isn't connected in time, the host didn't advertise `serverTools`, the host or the tool refuses, or nothing comes back in 15 seconds, it resolves to `{ status: 'unavailable', reason }` and leaves a breadcrumb. `context.canCallTools()` says whether a call has anywhere to go, so a card needn't draw a placeholder for an answer that can't arrive. Before the handshake, on ChatGPT, it uses `window.openai.callTool` if that exists.
+- **Tool calls.** A card can call a server tool itself with `context.callTool(name, args)` (`tool-caller.ts`). The call goes through the host (`tools/call` over the bridge) and resolves to the tool's `structuredContent`. It never rejects. If the bridge isn't connected in time, the host didn't advertise `serverTools`, the host or the tool refuses, or nothing comes back in 15 seconds, it resolves to `{ status: 'unavailable', reason }` and leaves a breadcrumb. `context.canCallTools()` says whether a call has anywhere to go, so a card needn't draw a placeholder for an answer that can't arrive. Before the handshake, on ChatGPT, it uses `window.openai.callTool` if that exists. If that channel refuses the call or answers with something unreadable, the reason is `rejected-before-connect`, which isn't final: `context.onConnect(listener)` tells a card when the bridge has connected, so it can ask again.
 - **Images.** `SafeImage` is the only place a card renders an `<img>`, and only from a `data:image/(webp|png|jpeg);base64,…` URI with its width and height given (`safe-image.ts`). A remote URL, an SVG or anything else draws nothing.
 
 Cards read `structuredContent` defensively, through the small readers in `guards.ts`. A missing or mistyped field drops out instead of throwing.
@@ -72,6 +72,8 @@ card ◀── { previews: [{ url, status, site_name, description, image, favico
   └─ rows gain favicon, site name, description, thumbnail; card reports its new height
 ```
 
+The tool only looks up URLs that a bookmark tool has returned (see [Which URLs it will look up](#which-urls-it-will-look-up)).
+
 ### Privacy
 
 To preview a bookmark, the server sends its URL to the bridge, with the Pinboard token as a bearer token. The bridge then fetches that page. This applies to private bookmarks too, whenever they are in a result the card shows. That is why the feature is off until someone names a bridge they trust.
@@ -83,7 +85,7 @@ To preview a bookmark, the server sends its URL to the bridge, with the Pinboard
 
 ### The tool
 
-`get_link_previews(urls)` takes 1 to 8 absolute `http(s)` URLs. Anything else is a `ValueError`. Duplicates are dropped. It returns one entry per URL, in order:
+`get_link_previews(urls)` takes a list of 1 to 8 strings. A request of any other shape (not a list, none or more than 8, an element that isn't a string) is a `ValueError`. Duplicates are dropped. It returns one entry per URL, in order. A URL it won't look up gets an `error` entry of its own, so one bad URL costs one row its preview and not the whole call.
 
 ```json
 {
@@ -102,11 +104,37 @@ To preview a bookmark, the server sends its URL to the bridge, with the Pinboard
 }
 ```
 
-- `status` is `ok`, `no_data` (the page has nothing to show), `error` (the bridge couldn't read it, or didn't answer in time) or `rate_limited`. Every field but `url` and `status` is `null` unless the status is `ok`.
+- `status` is one of:
+  - `ok`
+  - `no_data`: the page has nothing to show.
+  - `error`: the bridge couldn't read the page or didn't answer, or the tool won't look this URL up.
+  - `rate_limited`: the bridge's rate limit is in force.
+  - `pending`: the lookup was still running when the call had to answer. It carries on, and asking again a few seconds later finds its result.
+- Every field but `url` and `status` is `null` unless the status is `ok`.
 - `retry_after_seconds` is added beside `previews` when any entry is `rate_limited`. It is the bridge's `Retry-After`, held between 1 and 120, or 30 if the bridge gave none.
 - `retry: true` is added to an entry when the bridge was too busy to make that page's thumbnails (`thumbnailsStatus: "busy"`). The entry still carries whatever did arrive.
 
-The tool is marked `_meta.ui.visibility: ["app"]`, so an MCP Apps host keeps it out of the model's tool list and lets only the card call it. A host without MCP Apps support ignores that and lists it like any other tool, so its description says it is for the card and isn't useful to call directly.
+The result is a FastMCP `ToolResult`, not a plain dict. FastMCP serialises a dict twice, once as `structuredContent` and once as JSON in the text block, which would send every image over the wire twice. The `ToolResult` carries the data once, in `structuredContent`, with a one-line text block beside it ("Link previews for the bookmarks card: 5 of 6 found."). This is the one tool that departs from the "return a dict" rule in `CLAUDE.md`.
+
+The tool's `_meta` (`ui.APP_ONLY_TOOL_META`) carries three keys:
+
+| Key | What it does |
+|---|---|
+| `ui.visibility: ["app"]` | The MCP Apps standard. The host keeps the tool out of the model's tool list and lets only the card call it. |
+| `openai/widgetAccessible: true` | ChatGPT's own key. It lets a widget call the tool through `window.openai.callTool`. |
+| `openai/visibility: "private"` | ChatGPT's own key. It hides the tool from the model there. |
+
+A host without MCP Apps support ignores all three and lists the tool like any other. So its description says it is for the card and isn't useful to call directly, and the tool is restricted so that a model calling it can do no harm.
+
+#### Which URLs it will look up
+
+A host that ignores the visibility keys shows the tool to the model, and a model can be persuaded to call a tool with any argument. Without a restriction, that would make the bridge fetch any URL, with the user's Pinboard token attached to the request that asks for it, and return the page's images as base64 into the model's context.
+
+So the server keeps a set of the bookmark URLs its four bookmark tools have returned (`previews.OfferedUrls`, in `main.py` as `offered_urls`), and `get_link_previews` looks up only URLs in that set. Any other URL gets an `error` entry and the bridge is never contacted about it.
+
+- The set holds the 5,000 most recently returned or asked-about URLs, in memory, for the life of the process.
+- A URL must also be absolute `http` or `https`, have a host, contain no whitespace, and be at most 2,048 characters. The card applies the same rule before it asks (`isPreviewableUrl` in `preview-loader.ts`), so it doesn't send URLs the server would refuse.
+- After a server restart the set is empty. A card still open from before gets `error` entries, and so no previews, until a bookmark tool returns those rows again.
 
 Because the bridge's answers are derived from arbitrary web pages, `previews.py` validates every field before the card sees it:
 
@@ -120,18 +148,50 @@ The card applies the image rule again itself (`safe-image.ts`) and renders all t
 
 Limits and caching on the server:
 
-- Each lookup gets 10 seconds, and at most 4 run at once across all batches. A whole batch answers within 12 seconds, and any lookup still running then comes back as `error`, uncached.
+Timing on the server:
+
+| Limit | Value | Why |
+|---|---|---|
+| One lookup | 8.5 seconds, counted from when the request is sent | The bridge answers a thumbnail request within 7 seconds of its own. Time spent queued isn't counted. |
+| Lookups in flight | 8, across all calls | One call's 8 URLs go out together in one wave. The bridge runs 8 jobs at once per client, so there are never more in flight than it accepts. |
+| One call | Answers within 12 seconds | The card stops waiting for a tool call after 15 seconds. |
+
+- A lookup still running when its call answers isn't cancelled. Its entry comes back `pending`, the lookup finishes into the cache, and the card's second ask usually finds it there.
+- Two calls asking about the same URL at the same time share one lookup.
 - A bridge response over 1 MB is refused.
-- Results are cached in memory, up to 500 URLs. A finished preview is kept for 6 hours. A `no_data` or `error` result is kept for 10 minutes. So is a preview whose `thumbnailsStatus` is anything but `complete` (`transient`, `unavailable`), so its thumbnails are asked for again later. An older bridge that sends no `thumbnailsStatus` is treated as `complete`.
-- A `busy` result isn't cached at all, because the card is about to ask again and a cached answer would be the same one.
-- When the bridge answers 429, no further lookups in that batch are sent. The ones not yet started come back `rate_limited`, and none of those are cached.
-- The bridge caches page metadata and thumbnails on its own side. Nothing here needs to change for that.
+- Nothing one lookup does can fail the call. Any unexpected exception in a lookup (a response nested too deeply to parse, a URL the HTTP client won't send) becomes that URL's `error` entry, and only the exception's type is logged.
+
+Caching on the server, in memory, up to 500 URLs:
+
+| Answer | Kept for |
+|---|---|
+| `ok` with `thumbnailsStatus: "complete"` (or none, from an older bridge) | 6 hours |
+| `ok` with `thumbnailsStatus` `transient` or `unavailable` | 10 minutes, so the thumbnails are asked for again later |
+| `no_data`, or `error` from a page the bridge answered about (a 200 with nothing drawable, or a 400) | 10 minutes |
+| `busy` (`retry: true`) | Not kept. The card is about to ask again, and a cached answer would be the same one. |
+| `rate_limited`, `pending` | Not kept |
+| The bridge itself failed: timeout, connection error, 401, 5xx, an unusable body | Not kept. This says nothing about the page, so it isn't held against the page's URL. |
+
+- When the bridge answers 429, nothing more is sent to it until its `Retry-After` has passed. Lookups that would have been sent in that time come back `rate_limited`. Because a call's lookups go out together, the rest of the call that met the 429 has usually been sent already.
+- Three bridge failures in a row, or one 401, open a circuit breaker for 30 seconds. While it is open, lookups come back `error` at once without contacting the bridge. A 200, 400 or 429 isn't a failure for this count. Nor is a slow answer that arrives inside the 8.5 seconds.
+
+The bridge's `thumbnailsStatus`, on thumbnail-mode responses:
+
+| Value | Meaning |
+|---|---|
+| `complete` | The thumbnails in the response are all there will be. A page that failed for good (not HTML, a 4xx, blocked) is also reported this way, with nothing in it. |
+| `transient` | A timeout, network failure or 5xx, fetching the page or its images. It may not happen again. |
+| `busy` | The bridge was too busy to make the thumbnails this time. |
+| `unavailable` | The bridge can't make thumbnails. |
+
+The bridge caches rendered thumbnails on its own side. It doesn't cache page metadata. Its thumbnails are WebP or PNG.
 
 ### What the card does
 
 - It asks only when the result carries `previews_available: true` and `context.canCallTools()` is true.
 - It asks about the rows it has drawn, in calls of up to 8 URLs, one call at a time, each URL once (`preview-loader.ts`). The first 8 rows go out as one call as soon as the card renders.
-- Rows past the first 8 exist only after "Show all". Each of those is asked about when it comes near the viewport (`IntersectionObserver`), or straight away, in order, where there is no `IntersectionObserver`.
+- Rows past the first 8 exist only after "Show all". Those are asked about as they come near the viewport. One `IntersectionObserver` watches all of them (`row-watcher.ts`), so rows that scroll into view together are asked about in one call. Where there is no `IntersectionObserver`, they are asked about straight away, in order.
+- The row's source line always shows the host the link goes to, taken from the bookmark's URL. The page's own site name is shown before it ("Robin Sloan · robinsloan.com") only when it adds something: not when it repeats the host, and not when it is shaped like a different host name. When the line is short of room the site name is what gets shortened, and in a list narrower than 26rem (a phone) it is left out.
 - While a row's answer is on its way, the place for its thumbnail is held with a placeholder, so the text wraps once. A row that turns out to have no picture gives the place back.
 - The bookmark's own title is kept. Your notes are kept, and the page's description shows only on a row with no notes.
 - When previews change a row's height, the card calls `remeasure()` and the frame follows.
@@ -145,9 +205,13 @@ The card never shows an error for previews. It falls back to the rows it would h
 | The server has no bridge configured | Doesn't ask. |
 | The host doesn't proxy tool calls | Doesn't ask, and holds no placeholders. |
 | The host or the tool refuses a call, or it times out | Stops asking for the life of the card. Rows keep any previews they already have. |
+| A call made before the bridge connected had no way through (`not-connected`, or ChatGPT's `window.openai.callTool` refused it: `rejected-before-connect`) | Settles to the plain rows but keeps its queue. If the MCP Apps bridge then connects and proxies tool calls, it asks again, once. |
+| `pending` entries (the server was still looking the page up) | Keeps their placeholders and asks about them once more after 5 seconds. If they are still `pending`, those rows get no preview. |
 | A page has no data, or the bridge couldn't read it | That row stays as the bookmark alone. |
 | `rate_limited` entries | Keeps their placeholders, waits `retry_after_seconds`, and asks about them once more. If they are rate-limited again, it stops asking. |
 | `retry: true` entries (bridge busy) | Draws what arrived, and asks about those URLs once more after 5 seconds. Whatever comes back the second time stands. |
+
+The three second chances (`rate_limited`, `pending`, `retry: true`) are counted separately for each URL, so using one doesn't use up another.
 
 Each of these leaves a breadcrumb in the console (`[pinboard-card] callTool:…`, `previews:…`).
 
