@@ -9,8 +9,10 @@ import base64
 import json
 import logging
 import os
+import struct
 import subprocess
 import sys
+import zlib
 from pathlib import Path
 from typing import Any
 
@@ -24,11 +26,67 @@ BRIDGE = "https://bridge.example"
 TOKEN = "testuser:1234567890ABCDEF"
 FIXTURES = Path(__file__).resolve().parent.parent / "cards" / "fixtures"
 
-#: A real one-pixel PNG, so the base64 is something a decoder accepts.
-PIXEL = (
-    "data:image/png;base64,"
-    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
-)
+
+def png_bytes(width: int, height: int) -> bytes:
+    """A real PNG of that size: one colour, so it is small at any size."""
+
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        body = kind + data
+        return struct.pack(">I", len(data)) + body + struct.pack(">I", zlib.crc32(body))
+
+    header = struct.pack(">IIBBBBB", width, height, 8, 0, 0, 0, 0)
+    rows = (b"\x00" + b"\x80" * width) * height
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", header)
+        + chunk(b"IDAT", zlib.compress(rows, 9))
+        + chunk(b"IEND", b"")
+    )
+
+
+def webp_header(width: int, height: int, kind: str = "VP8X") -> bytes:
+    """The start of a WebP of that size, in one of its three layouts.
+
+    Only the header is real, which is all the server reads.
+    """
+    if kind == "VP8X":
+        chunk = (
+            b"VP8X"
+            + struct.pack("<I", 10)
+            + b"\x00\x00\x00\x00"
+            + (width - 1).to_bytes(3, "little")
+            + (height - 1).to_bytes(3, "little")
+        )
+    elif kind == "VP8L":
+        bits = (width - 1) | ((height - 1) << 14)
+        chunk = b"VP8L" + struct.pack("<I", 5) + b"\x2f" + struct.pack("<I", bits)
+        chunk += b"\x00" * 5
+    else:
+        chunk = (
+            b"VP8 "
+            + struct.pack("<I", 10)
+            + b"\x00\x00\x00\x9d\x01\x2a"
+            + struct.pack("<HH", width, height)
+        )
+    body = b"WEBP" + chunk
+    return b"RIFF" + struct.pack("<I", len(body)) + body
+
+
+def data_uri(mime: str, data: bytes) -> str:
+    return f"data:image/{mime};base64,{base64.b64encode(data).decode()}"
+
+
+def png_uri(width: int, height: int, padding: int = 0) -> str:
+    return data_uri("png", png_bytes(width, height) + b"\x00" * padding)
+
+
+def webp_uri(width: int, height: int, kind: str = "VP8X", padding: int = 0) -> str:
+    return data_uri("webp", webp_header(width, height, kind) + b"\x00" * padding)
+
+
+#: What the bridge sends: a WebP for the page's picture, a PNG for its favicon.
+IMAGE = webp_uri(240, 126)
+FAVICON = png_uri(32, 32)
 
 
 def bridge_payload(**overrides: Any) -> dict[str, Any]:
@@ -50,8 +108,8 @@ def bridge_payload(**overrides: Any) -> dict[str, Any]:
         },
         "previewStatus": "fresh",
         "thumbnails": {
-            "image": {"dataUri": PIXEL, "width": 240, "height": 126},
-            "favicon": {"dataUri": PIXEL, "width": 32, "height": 32},
+            "image": {"dataUri": IMAGE, "width": 240, "height": 126},
+            "favicon": {"dataUri": FAVICON, "width": 32, "height": 32},
         },
     }
     payload.update(overrides)
@@ -164,38 +222,62 @@ class TestBridgeUrl:
         assert previews.bridge_url() == "https://bridge.example"
 
 
-class TestRequestedUrls:
-    def test_keeps_order_and_drops_repeats(self):
-        assert previews.requested_urls(
-            ["https://b.example/", "http://a.example/x", "https://b.example/"]
-        ) == ["https://b.example/", "http://a.example/x"]
+class TestRequestedItems:
+    @staticmethod
+    def items(*urls: str) -> list[dict[str, str]]:
+        return [{"url": url, "token": f"token-{n}"} for n, url in enumerate(urls)]
+
+    def test_keeps_order_and_drops_repeats_keeping_the_first_token(self):
+        items = self.items(
+            "https://b.example/", "http://a.example/x", "https://b.example/"
+        )
+
+        assert previews.requested_items(items) == [
+            ("https://b.example/", "token-0"),
+            ("http://a.example/x", "token-1"),
+        ]
 
     @pytest.mark.parametrize(
-        "urls",
+        "items",
         [
             [],
-            [f"https://example.com/{n}" for n in range(9)],
+            [{"url": f"https://example.com/{n}", "token": "t"} for n in range(9)],
             "https://example.com",
             None,
-            {"url": "https://example.com"},
+            {"url": "https://example.com", "token": "t"},
+            ["https://example.com"],
             [42],
             [None],
-            ["https://ok.example", ["https://nested.example"]],
+            [{"token": "t"}],
+            [{"url": 42, "token": "t"}],
+            [{"url": "https://ok.example", "token": "t"}, ["https://nested.example"]],
         ],
     )
-    def test_rejects_a_request_of_the_wrong_shape(self, urls):
+    def test_rejects_a_request_of_the_wrong_shape(self, items):
         with pytest.raises(ValueError):
-            previews.requested_urls(urls)
+            previews.requested_items(items)
 
     def test_takes_exactly_eight(self):
-        urls = [f"https://example.com/{n}" for n in range(8)]
-        assert previews.requested_urls(urls) == urls
+        items = self.items(*(f"https://example.com/{n}" for n in range(8)))
 
-    def test_does_not_judge_the_urls_themselves(self):
-        # One bad URL is its own row's problem (an `error` entry from
-        # fetch_many), not a reason to refuse the other seven.
-        urls = ["https://ok.example/", "javascript:alert(1)", ""]
-        assert previews.requested_urls(urls) == urls
+        assert len(previews.requested_items(items)) == 8
+
+    def test_does_not_judge_the_urls_or_the_tokens_themselves(self):
+        # One bad item is its own row's problem (an `error` entry), not a
+        # reason to refuse the other seven.
+        items = [
+            {"url": "https://ok.example/", "token": "t"},
+            {"url": "javascript:alert(1)", "token": None},
+            {"url": ""},
+            {"url": "https://no-token.example/", "token": 42},
+        ]
+
+        assert previews.requested_items(items) == [
+            ("https://ok.example/", "t"),
+            ("javascript:alert(1)", None),
+            ("", None),
+            ("https://no-token.example/", 42),
+        ]
 
 
 class TestIsWebUrl:
@@ -236,41 +318,122 @@ class TestIsWebUrl:
         assert not previews.is_web_url(url)
 
 
-class TestOfferedUrls:
-    def test_knows_what_it_was_given_and_nothing_else(self):
-        offered = previews.OfferedUrls()
-        offered.add(["https://a.example/", "https://b.example/"])
+class TestPreviewTokens:
+    KEY = previews.preview_key(TOKEN)
+    URL = "https://example.com/article"
 
-        assert "https://a.example/" in offered
-        assert "https://b.example/" in offered
-        assert "https://a.example" not in offered
-        assert "https://c.example/" not in offered
-        assert None not in offered
+    def test_the_key_is_derived_from_the_pinboard_token_under_a_fixed_context(self):
+        import hashlib
 
-    def test_ignores_what_is_not_a_string(self):
-        offered = previews.OfferedUrls()
-        offered.add([None, 42, "https://a.example/"])
+        assert (
+            self.KEY
+            == hashlib.sha256(b"pinboard-mcp-preview-v1\0" + TOKEN.encode()).digest()
+        )
+        assert previews.preview_key("someone:else") != self.KEY
+        # Not the token itself, nor anything it could be read back from.
+        assert TOKEN.encode() not in self.KEY
 
-        assert len(offered) == 1
+    def test_a_token_is_the_first_ten_bytes_of_the_hmac_as_base64url(self):
+        import hashlib
+        import hmac
 
-    def test_is_bounded_and_forgets_the_least_recently_used(self):
-        offered = previews.OfferedUrls(maxsize=3)
-        offered.add(["https://1.example/", "https://2.example/", "https://3.example/"])
-        # Being asked about counts as use.
-        assert "https://1.example/" in offered
+        digest = hmac.new(self.KEY, self.URL.encode(), hashlib.sha256).digest()
+        expected = base64.urlsafe_b64encode(digest[:10]).decode().rstrip("=")
 
-        offered.add(["https://4.example/"])
+        token = previews.preview_token(self.KEY, self.URL)
 
-        assert len(offered) == 3
-        assert "https://1.example/" in offered
-        assert "https://2.example/" not in offered
-        assert "https://4.example/" in offered
+        assert token == expected
+        assert len(token) == 14
+        assert set(token) <= set(
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+        )
 
-    def test_holds_five_thousand_by_default(self):
-        offered = previews.OfferedUrls()
-        offered.add(f"https://example.com/{n}" for n in range(5100))
+    def test_the_same_token_comes_from_any_process_with_the_same_account(self):
+        other_worker = previews.preview_key(TOKEN)
 
-        assert len(offered) == 5000
+        assert previews.preview_token(other_worker, self.URL) == previews.preview_token(
+            self.KEY, self.URL
+        )
+
+    def test_a_token_matches_its_own_url_only(self):
+        token = previews.preview_token(self.KEY, self.URL)
+
+        assert previews.token_matches(self.KEY, self.URL, token)
+        assert not previews.token_matches(self.KEY, self.URL + "?x=1", token)
+        assert not previews.token_matches(self.KEY, "https://evil.example/", token)
+        assert not previews.token_matches(previews.preview_key("x:y"), self.URL, token)
+
+    @pytest.mark.parametrize(
+        "token", ["", "AAAAAAAAAAAAAA", None, 42, ["x"], "caf\u00e9", "x" * 5000]
+    )
+    def test_anything_else_does_not_match(self, token):
+        assert not previews.token_matches(self.KEY, self.URL, token)
+
+    def test_tokens_are_compared_in_constant_time(self, monkeypatch):
+        import hmac
+
+        seen = []
+        real = hmac.compare_digest
+
+        def spy(a, b):
+            seen.append((a, b))
+            return real(a, b)
+
+        monkeypatch.setattr(previews.hmac, "compare_digest", spy)
+        previews.token_matches(self.KEY, self.URL, "guess")
+
+        assert len(seen) == 1
+
+    def test_a_url_that_is_not_ascii_still_has_a_token(self):
+        url = "https://example.com/caf\u00e9"
+
+        assert previews.token_matches(
+            self.KEY, url, previews.preview_token(self.KEY, url)
+        )
+
+
+class TestImageSize:
+    @pytest.mark.parametrize(
+        ("width", "height"), [(1, 1), (32, 32), (240, 126), (1024, 7)]
+    )
+    def test_reads_a_png_s_real_size(self, width, height):
+        assert previews.image_size("png", png_bytes(width, height)) == (width, height)
+
+    @pytest.mark.parametrize("kind", ["VP8 ", "VP8L", "VP8X"])
+    @pytest.mark.parametrize(("width", "height"), [(1, 1), (240, 126), (1024, 768)])
+    def test_reads_a_webp_s_real_size_from_each_layout(self, kind, width, height):
+        assert previews.image_size("webp", webp_header(width, height, kind)) == (
+            width,
+            height,
+        )
+
+    def test_the_bytes_have_to_be_the_kind_they_are_declared_to_be(self):
+        assert previews.image_size("webp", png_bytes(8, 8)) is None
+        assert previews.image_size("png", webp_header(8, 8)) is None
+        assert previews.image_size("jpeg", b"\xff\xd8\xff" + b"\x00" * 64) is None
+
+    @pytest.mark.parametrize("kind", ["png", "webp"])
+    def test_truncated_or_empty_bytes_are_not_an_image(self, kind):
+        whole = png_bytes(8, 8) if kind == "png" else webp_header(8, 8)
+        for length in range(0, 24 if kind == "png" else 30):
+            assert previews.image_size(kind, whole[:length]) is None
+
+    def test_a_webp_with_a_broken_inner_header_is_not_an_image(self):
+        lossy = bytearray(webp_header(8, 8, "VP8 "))
+        lossy[23] = 0
+        lossless = bytearray(webp_header(8, 8, "VP8L"))
+        lossless[20] = 0
+        unknown = bytearray(webp_header(8, 8))
+        unknown[12:16] = b"ANIM"
+
+        for broken in (lossy, lossless, unknown):
+            assert previews.image_size("webp", bytes(broken)) is None
+
+    def test_a_png_whose_first_chunk_is_not_its_header_is_not_an_image(self):
+        broken = bytearray(png_bytes(8, 8))
+        broken[12:16] = b"tEXt"
+
+        assert previews.image_size("png", bytes(broken)) is None
 
 
 class TestSanitisePreview:
@@ -284,8 +447,8 @@ class TestSanitisePreview:
             "description": "What the article is about.",
             "site_name": "Example",
             "theme_color": "#1a2b3c",
-            "image": {"data_uri": PIXEL, "width": 240, "height": 126},
-            "favicon": {"data_uri": PIXEL, "width": 32, "height": 32},
+            "image": {"data_uri": IMAGE, "width": 240, "height": 126},
+            "favicon": {"data_uri": FAVICON, "width": 32, "height": 32},
         }
 
     def test_remote_image_urls_never_reach_the_card(self):
@@ -365,12 +528,70 @@ class TestSanitisePreview:
 
         assert entry["theme_color"] is None
 
-    @pytest.mark.parametrize("mime", ["webp", "png", "jpeg"])
-    def test_raster_data_uris_are_kept(self, mime):
-        uri = f"data:image/{mime};base64,AAAA"
+    @pytest.mark.parametrize(
+        "uri",
+        [
+            webp_uri(240, 126),
+            webp_uri(240, 126, "VP8L"),
+            webp_uri(240, 126, "VP8 "),
+            png_uri(240, 126),
+        ],
+        ids=["webp-extended", "webp-lossless", "webp-lossy", "png"],
+    )
+    def test_the_bridge_s_two_formats_are_kept(self, uri):
         entry = previews.sanitise_preview(self.URL, with_image(dataUri=uri))
 
         assert entry["image"] == {"data_uri": uri, "width": 240, "height": 126}
+
+    @pytest.mark.parametrize(
+        ("claimed", "real"),
+        [
+            ((240, 126), (241, 126)),
+            ((240, 126), (240, 125)),
+            ((240, 126), (126, 240)),
+            ((16, 16), (1024, 1024)),
+            ((1024, 1024), (1, 1)),
+        ],
+    )
+    @pytest.mark.parametrize("mime", ["png", "webp"])
+    def test_an_image_whose_real_size_is_not_the_claimed_one_is_dropped(
+        self, mime, claimed, real
+    ):
+        uri = png_uri(*real) if mime == "png" else webp_uri(*real)
+        entry = previews.sanitise_preview(
+            self.URL, with_image(dataUri=uri, width=claimed[0], height=claimed[1])
+        )
+
+        assert entry["image"] is None
+        assert entry["favicon"] is not None
+
+    def test_an_image_really_larger_than_the_limit_is_dropped_whatever_it_claims(self):
+        uri = webp_uri(4000, 3000)
+
+        for width, height in ((4000, 3000), (1024, 768)):
+            entry = previews.sanitise_preview(
+                self.URL, with_image(dataUri=uri, width=width, height=height)
+            )
+            assert entry["image"] is None
+
+    @pytest.mark.parametrize(
+        "uri",
+        [
+            # The right label on the wrong bytes, each way round.
+            data_uri("png", webp_header(240, 126)),
+            data_uri("webp", png_bytes(240, 126)),
+            # A JPEG, which the bridge never sends, under any label.
+            data_uri("jpeg", b"\xff\xd8\xff\xe0" + b"\x00" * 64),
+            data_uri("png", b"\xff\xd8\xff\xe0" + b"\x00" * 64),
+            # Valid base64 of nothing in particular.
+            "data:image/png;base64,AAAA",
+            "data:image/webp;base64,AAAA",
+        ],
+    )
+    def test_bytes_that_are_not_the_declared_kind_of_image_are_dropped(self, uri):
+        entry = previews.sanitise_preview(self.URL, with_image(dataUri=uri))
+
+        assert entry["image"] is None
 
     @pytest.mark.parametrize(
         "uri",
@@ -404,14 +625,12 @@ class TestSanitisePreview:
         assert entry["favicon"] is not None
 
     def test_an_oversized_image_is_dropped(self):
-        prefix = "data:image/png;base64,"
-        # Whole base64 quads, so only the length separates the two.
-        quads = (previews.MAX_IMAGE_DATA_URI_LENGTH - len(prefix)) // 4
-        at_limit = prefix + "AAAA" * quads
-        over = prefix + "AAAA" * (quads + 1)
-        assert len(at_limit) <= previews.MAX_IMAGE_DATA_URI_LENGTH < len(over)
+        # The same picture, padded to just under and just over the ceiling.
+        fits = webp_uri(240, 126, padding=40_000)
+        over = webp_uri(240, 126, padding=50_000)
+        assert len(fits) <= previews.MAX_IMAGE_DATA_URI_LENGTH < len(over)
 
-        kept = previews.sanitise_preview(self.URL, with_image(dataUri=at_limit))
+        kept = previews.sanitise_preview(self.URL, with_image(dataUri=fits))
         dropped = previews.sanitise_preview(self.URL, with_image(dataUri=over))
 
         assert kept["image"] is not None
@@ -419,9 +638,7 @@ class TestSanitisePreview:
 
     def test_a_favicon_has_a_smaller_ceiling(self):
         payload = bridge_payload()
-        big = "data:image/png;base64," + "AAAA" * (
-            previews.MAX_FAVICON_DATA_URI_LENGTH // 4
-        )
+        big = png_uri(32, 32, padding=10_000)
         assert len(big) > previews.MAX_FAVICON_DATA_URI_LENGTH
         assert len(big) < previews.MAX_IMAGE_DATA_URI_LENGTH
         payload["thumbnails"]["favicon"]["dataUri"] = big
@@ -449,7 +666,10 @@ class TestSanitisePreview:
         assert entry["image"] is None
 
     def test_the_largest_allowed_dimensions_pass(self):
-        entry = previews.sanitise_preview(self.URL, with_image(width=1024, height=1024))
+        entry = previews.sanitise_preview(
+            self.URL,
+            with_image(dataUri=webp_uri(1024, 1024), width=1024, height=1024),
+        )
 
         assert entry["image"]["width"] == 1024
 
@@ -640,7 +860,6 @@ class TestFetchMany:
     @pytest.mark.parametrize(
         "response",
         [
-            httpx2.Response(200, json={"preview": None, "previewStatus": "no_data"}),
             httpx2.Response(
                 200,
                 json={
@@ -651,16 +870,57 @@ class TestFetchMany:
             ),
             httpx2.Response(400, json={"error": "unreachable"}),
         ],
-        ids=["no_data", "page-fetch-failed", "bad-url"],
+        ids=["page-fetch-failed-for-now", "bad-url"],
     )
-    async def test_a_page_level_miss_is_kept_for_ten_minutes_only(self, response):
+    async def test_an_unsettled_miss_is_kept_for_ten_minutes_only(self, response):
         clock = Clock()
         bridge = Bridge(lambda request: response)
         client = bridge.client(timer=clock)
 
         first = await client.fetch_many(["https://example.com/a"])
-        assert first["previews"][0]["status"] in {"no_data", "error"}
+        assert first["previews"][0]["status"] == "error"
         clock.now += 10 * 60 - 1
+        await client.fetch_many(["https://example.com/a"])
+        assert len(bridge.requests) == 1
+
+        clock.now += 2
+        await client.fetch_many(["https://example.com/a"])
+        assert len(bridge.requests) == 2
+
+    @pytest.mark.parametrize(
+        ("payload", "status"),
+        [
+            ({"preview": None, "previewStatus": "no_data"}, "no_data"),
+            (
+                {
+                    "preview": None,
+                    "previewStatus": "no_data",
+                    "thumbnailsStatus": "complete",
+                },
+                "no_data",
+            ),
+            (
+                {
+                    "preview": None,
+                    "previewStatus": "error",
+                    "thumbnails": {"image": None, "favicon": None},
+                    "thumbnailsStatus": "complete",
+                },
+                "error",
+            ),
+        ],
+        ids=["no_data-older-bridge", "no_data", "failed-for-good"],
+    )
+    async def test_a_miss_the_bridge_calls_settled_is_kept_six_hours(
+        self, payload, status
+    ):
+        clock = Clock()
+        bridge = Bridge(lambda request: httpx2.Response(200, json=payload))
+        client = bridge.client(timer=clock)
+
+        first = await client.fetch_many(["https://example.com/a"])
+        assert first["previews"][0]["status"] == status
+        clock.now += 6 * 60 * 60 - 1
         await client.fetch_many(["https://example.com/a"])
         assert len(bridge.requests) == 1
 
@@ -976,10 +1236,8 @@ class TestRefusedUrls:
         )
         assert bridge.asked() == ["https://example.com/a", "https://example.com/b"]
 
-    async def test_only_offered_urls_reach_the_bridge(self):
+    async def test_only_allowed_urls_reach_the_bridge(self):
         bridge = Bridge()
-        offered = previews.OfferedUrls()
-        offered.add(["https://bookmarked.example/a"])
 
         result = await bridge.client().fetch_many(
             [
@@ -987,7 +1245,7 @@ class TestRefusedUrls:
                 "http://169.254.169.254/latest/meta-data/",
                 "https://attacker.example/collect?secret=1",
             ],
-            allowed=offered,
+            allowed={"https://bookmarked.example/a"},
         )
 
         assert [entry["status"] for entry in result["previews"]] == [
@@ -1000,20 +1258,18 @@ class TestRefusedUrls:
     async def test_a_refused_url_is_not_cached_as_a_verdict(self):
         bridge = Bridge()
         client = bridge.client()
-        offered = previews.OfferedUrls()
 
-        await client.fetch_many(["https://example.com/a"], allowed=offered)
-        offered.add(["https://example.com/a"])
-        result = await client.fetch_many(["https://example.com/a"], allowed=offered)
+        await client.fetch_many(["https://example.com/a"], allowed=set())
+        result = await client.fetch_many(
+            ["https://example.com/a"], allowed={"https://example.com/a"}
+        )
 
         assert result["previews"][0]["status"] == "ok"
 
     async def test_a_call_with_nothing_to_look_up_answers_at_once(self):
         bridge = Bridge()
 
-        result = await bridge.client().fetch_many(
-            ["ftp://example.com/"], allowed=previews.OfferedUrls()
-        )
+        result = await bridge.client().fetch_many(["ftp://example.com/"], allowed=set())
 
         assert result == {
             "previews": [
@@ -1087,7 +1343,7 @@ class TestOneLookupCannotFailTheBatch:
 
 
 class TestBridgeFailuresAreNotThePagesFault:
-    """A timeout, a refused connection, a 401 or a 5xx says nothing about the page."""
+    """Not reaching the bridge says nothing about a page; one page's lookup failing says little about the bridge."""
 
     @staticmethod
     def failing(kind: str) -> Any:
@@ -1096,31 +1352,118 @@ class TestBridgeFailuresAreNotThePagesFault:
                 await asyncio.sleep(5)
             if kind == "connect":
                 raise httpx2.ConnectError("connection refused")
+            if kind == "connect-timeout":
+                raise httpx2.ConnectTimeout("no answer")
+            if kind == "read-error":
+                raise httpx2.ReadError("connection reset")
             if kind == "not-json":
                 return httpx2.Response(200, text="<html>bad gateway</html>")
             return httpx2.Response(int(kind))
 
         return respond
 
-    @pytest.mark.parametrize(
-        "kind", ["timeout", "connect", "500", "502", "503", "301", "not-json"]
-    )
-    async def test_a_transport_failure_is_not_cached_against_the_url(self, kind):
+    @pytest.mark.parametrize("kind", ["connect", "connect-timeout", "401"])
+    async def test_an_unreachable_bridge_is_not_cached_against_the_url(self, kind):
+        clock = Clock()
         bridge = Bridge(self.failing(kind))
-        client = bridge.client(request_timeout=0.05)
+        client = bridge.client(timer=clock)
 
         first = await client.fetch_many(["https://example.com/a"])
         assert first["previews"][0]["status"] == "error"
 
         bridge.respond = lambda request: httpx2.Response(200, json=bridge_payload())
+        clock.now += 31  # past the breaker a 401 opens
         second = await client.fetch_many(["https://example.com/a"])
 
         assert second["previews"][0]["status"] == "ok"
         assert len(bridge.requests) == 2
 
-    async def test_a_run_of_failures_opens_the_breaker_for_thirty_seconds(self, caplog):
+    @pytest.mark.parametrize(
+        "kind", ["timeout", "500", "502", "503", "301", "not-json", "read-error"]
+    )
+    async def test_one_page_s_failed_lookup_is_kept_for_a_minute(self, kind):
         clock = Clock()
-        bridge = Bridge(self.failing("503"))
+        bridge = Bridge(self.failing(kind))
+        client = bridge.client(timer=clock, request_timeout=0.05)
+
+        first = await client.fetch_many(["https://example.com/slow"])
+        assert first["previews"][0]["status"] == "error"
+        bridge.respond = lambda request: httpx2.Response(200, json=bridge_payload())
+
+        # The next card showing that page does not wait the timeout out again.
+        clock.now += 59
+        again = await client.fetch_many(["https://example.com/slow"])
+        assert again["previews"][0]["status"] == "error"
+        assert len(bridge.requests) == 1
+
+        clock.now += 2
+        later = await client.fetch_many(["https://example.com/slow"])
+        assert later["previews"][0]["status"] == "ok"
+        assert len(bridge.requests) == 2
+
+    @pytest.mark.parametrize("kind", ["timeout", "503", "not-json"])
+    async def test_slow_pages_one_at_a_time_never_lock_other_pages_out(
+        self, kind, caplog
+    ):
+        bridge = Bridge(self.failing(kind))
+        client = bridge.client(request_timeout=0.05)
+
+        with caplog.at_level("WARNING", logger="pinboard_mcp_server.previews"):
+            for n in range(6):
+                await client.fetch_many([f"https://slow.example/{n}"])
+            bridge.respond = lambda request: httpx2.Response(200, json=bridge_payload())
+            result = await client.fetch_many(["https://fine.example/"])
+
+        assert result["previews"][0]["status"] == "ok"
+        assert len(bridge.requests) == 7
+        assert "not answering" not in caplog.text
+
+    async def test_a_slow_page_among_good_ones_does_not_count(self):
+        def respond(request: httpx2.Request) -> httpx2.Response:
+            if "slow" in request.url.params["url"]:
+                return httpx2.Response(503)
+            return httpx2.Response(200, json=bridge_payload())
+
+        bridge = Bridge(respond)
+        client = bridge.client()
+
+        for n in range(4):
+            await client.fetch_many(
+                [f"https://slow.example/{n}", f"https://fine.example/{n}"]
+            )
+
+        assert len(bridge.requests) == 8
+
+    @pytest.mark.parametrize("kind", ["timeout", "503"])
+    async def test_a_whole_wave_failing_together_is_the_bridge(self, kind, caplog):
+        clock = Clock()
+        bridge = Bridge(self.failing(kind))
+        client = bridge.client(timer=clock, request_timeout=0.05)
+        urls = [f"https://example.com/{n}" for n in range(3)]
+
+        with caplog.at_level("WARNING", logger="pinboard_mcp_server.previews"):
+            first = await client.fetch_many(urls)
+        assert [entry["status"] for entry in first["previews"]] == ["error"] * 3
+        assert "not answering" in caplog.text
+
+        # Open: nothing is sent, for those pages or any other.
+        bridge.respond = lambda request: httpx2.Response(200, json=bridge_payload())
+        clock.now += 29
+        during = await client.fetch_many([*urls, "https://example.com/new"])
+        assert [entry["status"] for entry in during["previews"]] == ["error"] * 4
+        assert len(bridge.requests) == 3
+
+        # Shut again, and the failures were not held against the pages.
+        clock.now += 2
+        after = await client.fetch_many(urls)
+        assert [entry["status"] for entry in after["previews"]] == ["ok"] * 3
+        assert len(bridge.requests) == 6
+
+    async def test_a_run_of_failures_to_connect_opens_the_breaker_for_thirty_seconds(
+        self, caplog
+    ):
+        clock = Clock()
+        bridge = Bridge(self.failing("connect"))
         client = bridge.client(timer=clock)
 
         with caplog.at_level("WARNING", logger="pinboard_mcp_server.previews"):
@@ -1144,14 +1487,18 @@ class TestBridgeFailuresAreNotThePagesFault:
         )
         assert [entry["status"] for entry in result["previews"]] == ["ok", "ok"]
 
-    async def test_a_success_between_failures_keeps_the_breaker_shut(self):
+    async def test_any_response_between_failures_to_connect_keeps_the_breaker_shut(
+        self,
+    ):
         bridge = Bridge()
         client = bridge.client()
-        answers = iter([503, 503, 200, 503, 503, 200])
+        answers = iter(["connect", "connect", 503, "connect", "connect", 200])
 
         def respond(request: httpx2.Request) -> httpx2.Response:
-            status = next(answers)
-            return httpx2.Response(status, json=bridge_payload())
+            answer = next(answers)
+            if answer == "connect":
+                raise httpx2.ConnectError("connection refused")
+            return httpx2.Response(answer, json=bridge_payload())
 
         bridge.respond = respond
         for n in range(6):
@@ -1456,23 +1803,27 @@ asyncio.run(go())
 """
 
 CALL_TOOLS = """
-import asyncio, json
+import asyncio, json, logging
 from unittest.mock import AsyncMock, Mock
+import httpx2
 from fastmcp import Client
-from pinboard_mcp_server import main
+from pinboard_mcp_server import main, previews
 from pinboard_mcp_server.models import Bookmark
 
-class FakePreviews:
-    def __init__(self):
-        self.asked = []
+PAYLOAD = json.loads(@PAYLOAD@)
+asked = []
 
-    async def fetch_many(self, urls, *, allowed=None):
-        offered = [url for url in urls if allowed is None or url in allowed]
-        self.asked.append(offered)
-        return {"previews": [
-            {"url": url, "status": "no_data" if url in offered else "error"}
-            for url in urls
-        ]}
+class Records(logging.Handler):
+    def __init__(self):
+        super().__init__(logging.DEBUG)
+        self.lines = []
+
+    def emit(self, record):
+        self.lines.append(record.getMessage() + " " + repr(record.args))
+
+async def bridge(request):
+    asked.append(request.url.params["url"])
+    return httpx2.Response(200, json=PAYLOAD)
 
 async def call(client, name, arguments):
     result = await client.call_tool_mcp(name, arguments)
@@ -1483,6 +1834,9 @@ async def call(client, name, arguments):
     }
 
 async def go():
+    records = Records()
+    logging.getLogger().addHandler(records)
+    logging.getLogger().setLevel(logging.DEBUG)
     bookmarks = [
         Bookmark.from_pinboard({
             "href": "https://example.com/" + name, "description": name, "extended": "",
@@ -1494,14 +1848,11 @@ async def go():
     for method in ("search_bookmarks", "search_bookmarks_extended",
                    "get_recent_bookmarks", "get_bookmarks_by_tags"):
         setattr(main.client, method, AsyncMock(return_value=bookmarks))
-    fake = FakePreviews()
+    link_previews = previews.LinkPreviews(
+        "https://bridge.example", "@TOKEN@", transport=httpx2.MockTransport(bridge))
     report = {}
     a, b = "https://example.com/a", "https://example.com/b"
     async with Client(main.mcp) as client:
-        report["unconfigured"] = await call(client, "get_link_previews", {"urls": [a]})
-        main.link_previews = fake
-        report["before_any_bookmarks"] = await call(
-            client, "get_link_previews", {"urls": [a]})
         report["bookmarks"] = {
             "search_bookmarks": await call(client, "search_bookmarks", {"query": "a"}),
             "search_bookmarks_extended": await call(
@@ -1510,13 +1861,36 @@ async def go():
             "list_bookmarks_by_tags": await call(
                 client, "list_bookmarks_by_tags", {"tags": ["python"]}),
         }
-        report["ok"] = await call(client, "get_link_previews", {"urls": [a, b, a]})
-        report["mixed"] = await call(client, "get_link_previews", {"urls": [
-            a, "javascript:alert(1)", "https://elsewhere.example/secret"]})
+        found = report["bookmarks"]["search_bookmarks"]["structured"]["bookmarks"]
+        token = {bookmark["url"]: bookmark["preview_token"] for bookmark in found}
+        item = lambda url: {"url": url, "token": token[url]}
+        report["unconfigured"] = await call(
+            client, "get_link_previews", {"items": [item(a)]})
+        main.link_previews = link_previews
+        report["ok"] = await call(
+            client, "get_link_previews", {"items": [item(a), item(b), item(a)]})
+        report["asked_for_ok"] = list(asked)
+        report["mixed"] = await call(client, "get_link_previews", {"items": [
+            item(a),
+            {"url": "https://elsewhere.example/secret", "token": token[a]},
+            {"url": "https://example.com/c", "token": "AAAAAAAAAAAAAA"},
+            {"url": "javascript:alert(1)", "token": token[a]},
+            {"url": "https://example.com/no-token"},
+            {"url": "https://example.com/odd-token", "token": 42},
+        ]})
         report["too_many"] = await call(client, "get_link_previews", {
-            "urls": ["https://example.com/%d" % n for n in range(9)]})
-        report["none"] = await call(client, "get_link_previews", {"urls": []})
-    report["asked"] = fake.asked
+            "items": [{"url": "https://example.com/%d" % n, "token": "t"}
+                      for n in range(9)]})
+        report["none"] = await call(client, "get_link_previews", {"items": []})
+        report["bare_urls"] = await call(client, "get_link_previews", {"items": [a]})
+        report["old_argument"] = await call(client, "get_link_previews", {"urls": [a]})
+        report["open_while_serving"] = not link_previews._http.is_closed
+    report["closed_after_serving"] = link_previews._http.is_closed
+    report["asked"] = asked
+    report["tokens"] = token
+    logged = "\\n".join(records.lines)
+    report["token_logged"] = any(value in logged for value in token.values())
+    report["pinboard_token_logged"] = "@TOKEN@" in logged
     print(json.dumps(report))
 
 asyncio.run(go())
@@ -1587,58 +1961,109 @@ class TestToolRegistration:
 
 
 class TestToolCalls:
+    """The tool end to end, through FastMCP, against a stand-in bridge."""
+
+    A = "https://example.com/a"
+    B = "https://example.com/b"
+
     @pytest.fixture(scope="class")
     @classmethod
     def report(cls) -> dict[str, Any]:
-        return _run_server_script(CALL_TOOLS, **{previews.BRIDGE_URL_ENV_VAR: BRIDGE})
+        script = CALL_TOOLS.replace(
+            "@PAYLOAD@", repr(json.dumps(bridge_payload()))
+        ).replace("@TOKEN@", TOKEN)
+        return _run_server_script(
+            script, **{previews.BRIDGE_URL_ENV_VAR: BRIDGE, "PINBOARD_TOKEN": TOKEN}
+        )
+
+    def test_bookmark_tools_tell_the_card_previews_are_available(self, report):
+        for name in BOOKMARK_TOOLS:
+            assert report["bookmarks"][name]["structured"]["previews_available"] is True
+
+    def test_every_bookmark_carries_the_token_for_its_own_url(self, report):
+        key = previews.preview_key(TOKEN)
+        for name in BOOKMARK_TOOLS:
+            bookmarks = report["bookmarks"][name]["structured"]["bookmarks"]
+            assert [bookmark["url"] for bookmark in bookmarks] == [self.A, self.B]
+            for bookmark in bookmarks:
+                assert bookmark["preview_token"] == previews.preview_token(
+                    key, bookmark["url"]
+                )
+            # And the model's copy of the result carries it too: one result, two readers.
+            text = json.loads(report["bookmarks"][name]["texts"][0])
+            assert (
+                text["bookmarks"][0]["preview_token"] == bookmarks[0]["preview_token"]
+            )
 
     def test_urls_are_deduplicated_and_answered_in_order(self, report):
-        assert report["asked"][1] == ["https://example.com/a", "https://example.com/b"]
+        assert report["asked_for_ok"] == [self.A, self.B]
         assert report["ok"]["is_error"] is False
-        assert [p["url"] for p in report["ok"]["structured"]["previews"]] == [
-            "https://example.com/a",
-            "https://example.com/b",
-        ]
+        previews_ = report["ok"]["structured"]["previews"]
+        assert [p["url"] for p in previews_] == [self.A, self.B]
+        assert [p["status"] for p in previews_] == ["ok", "ok"]
+        assert previews_[0]["image"] == {
+            "data_uri": IMAGE,
+            "width": 240,
+            "height": 126,
+        }
 
-    def test_only_urls_a_bookmark_tool_returned_reach_the_bridge(self, report):
-        # Asked before any bookmark tool ran, the same URL is refused.
-        assert report["asked"][0] == []
-        before = report["before_any_bookmarks"]
-        assert before["is_error"] is False
-        assert [p["status"] for p in before["structured"]["previews"]] == ["error"]
-
-    def test_a_url_the_tool_will_not_look_up_costs_only_its_own_row(self, report):
+    def test_only_a_url_with_its_own_token_reaches_the_bridge(self, report):
         mixed = report["mixed"]
 
         assert mixed["is_error"] is False
         assert [p["status"] for p in mixed["structured"]["previews"]] == [
-            "no_data",
-            "error",
-            "error",
+            "ok",  # its own token
+            "error",  # another URL's token
+            "error",  # a made-up token
+            "error",  # not a web URL, whatever the token
+            "error",  # no token
+            "error",  # a token that is not a string
         ]
-        assert report["asked"][2] == ["https://example.com/a"]
+        # Nothing but the two bookmarks was ever sent to the bridge.
+        assert report["asked"] == [self.A, self.B]
 
-    def test_the_text_block_is_one_line_and_not_the_payload_again(self, report):
+    def test_the_text_block_is_the_result_as_compact_json_without_the_images(
+        self, report
+    ):
         for case in ("ok", "mixed"):
-            texts = report[case]["texts"]
-            assert len(texts) == 1
-            assert "\n" not in texts[0]
-            assert len(texts[0]) < 100
-            assert "previews" not in texts[0].lower().replace("link previews", "")
-            assert "example.com" not in texts[0]
+            (text,) = report[case]["texts"]
+            structured = report[case]["structured"]
+            parsed = json.loads(text)
 
-    @pytest.mark.parametrize("case", ["too_many", "none"])
-    def test_a_bad_request_is_refused_before_the_bridge_is_asked(self, report, case):
+            assert "\n" not in text
+            assert text == json.dumps(parsed, separators=(",", ":"))
+            assert "base64" not in text
+            assert len(text) < 2000
+            assert [entry["image"] for entry in parsed["previews"]] == [None] * len(
+                structured["previews"]
+            )
+            assert [entry["favicon"] for entry in parsed["previews"]] == [None] * len(
+                structured["previews"]
+            )
+            # Everything else is the same result.
+            for sent, kept in zip(
+                parsed["previews"], structured["previews"], strict=True
+            ):
+                assert {**kept, "image": None, "favicon": None} == sent
+            assert set(parsed) == set(structured)
+
+    @pytest.mark.parametrize("case", ["too_many", "none", "bare_urls", "old_argument"])
+    def test_a_request_of_the_wrong_shape_is_refused(self, report, case):
         assert report[case]["is_error"] is True
-        assert len(report["asked"]) == 3
+        assert report["asked"] == [self.A, self.B]
 
     def test_a_server_started_without_its_bridge_client_says_so(self, report):
         assert report["unconfigured"]["is_error"] is True
         assert "not configured" in report["unconfigured"]["texts"][0]
 
-    def test_bookmark_tools_tell_the_card_previews_are_available(self, report):
-        for name in BOOKMARK_TOOLS:
-            assert report["bookmarks"][name]["structured"]["previews_available"] is True
+    def test_the_bridge_client_is_closed_when_the_server_stops(self, report):
+        assert report["open_while_serving"] is True
+        assert report["closed_after_serving"] is True
+
+    def test_no_token_of_either_kind_is_logged(self, report):
+        assert len(report["tokens"]) == 2
+        assert report["token_logged"] is False
+        assert report["pinboard_token_logged"] is False
 
     async def test_without_a_bridge_bookmark_results_are_unchanged(self, mock_client):
         from fastmcp import Client

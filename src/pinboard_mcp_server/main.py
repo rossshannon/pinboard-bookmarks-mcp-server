@@ -1,7 +1,10 @@
 """Main entry point for the Pinboard MCP Server."""
 
+import json
 import os
 import sys
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Any
 
@@ -11,8 +14,24 @@ from fastmcp.tools import ToolResult  # type: ignore
 from pinboard_mcp_server import previews, ui
 from pinboard_mcp_server.client import PinboardClient
 
+
+@asynccontextmanager
+async def _lifespan(_server: FastMCP) -> AsyncIterator[None]:
+    """Close the preview bridge's client when the server stops.
+
+    Here, and not after ``mcp.run()`` returns, because by then the event loop
+    its lookups ran in is gone: this is the last moment they can be cancelled
+    and its connections closed cleanly.
+    """
+    try:
+        yield
+    finally:
+        if link_previews is not None:
+            await link_previews.aclose()
+
+
 # Initialize FastMCP server
-mcp: FastMCP = FastMCP("Pinboard MCP Server")
+mcp: FastMCP = FastMCP("Pinboard MCP Server", lifespan=_lifespan)
 
 # MCP Apps result cards: each tool's descriptor points at the card that renders
 # its result, and the cards are served as ui:// resources. Read once, at import,
@@ -37,22 +56,49 @@ client: PinboardClient
 # The preview bridge's client - initialized in main() when previews are on
 link_previews: previews.LinkPreviews | None = None
 
-# Every bookmark URL the tools below have recently returned. get_link_previews
-# looks up nothing else, so it cannot be used to make the bridge fetch an
-# arbitrary URL with the user's token (see previews.OfferedUrls).
-offered_urls = previews.OfferedUrls()
+# The key preview tokens are made and checked with, derived from the Pinboard
+# token on first use (see previews.preview_token).
+_preview_key: bytes | None = None
+
+
+def _key() -> bytes | None:
+    """The preview-token key, or ``None`` when there is no Pinboard token to derive it from."""
+    global _preview_key
+    if _preview_key is None:
+        token = os.getenv("PINBOARD_TOKEN")
+        if token:
+            _preview_key = previews.preview_key(token)
+    return _preview_key
 
 
 def _bookmarks_result(result: dict[str, Any]) -> dict[str, Any]:
     """A bookmark tool's result, telling the card when it may ask for previews.
 
-    The key is added only when true, so with previews off every tool returns
-    exactly what it always has.
+    With previews on, the result says so, and each bookmark carries the
+    ``preview_token`` the card must hand back to have that URL looked up:
+    get_link_previews looks up nothing else, so it cannot be used to make the
+    bridge fetch an arbitrary URL with the user's token. Both keys are added
+    only then, so with previews off every tool returns exactly what it
+    always has.
     """
-    if PREVIEWS_ENABLED:
+    key = _key() if PREVIEWS_ENABLED else None
+    if key is not None:
         result["previews_available"] = True
-        offered_urls.add(bookmark.get("url") for bookmark in result["bookmarks"])
+        for bookmark in result["bookmarks"]:
+            url = bookmark.get("url")
+            if isinstance(url, str):
+                bookmark["preview_token"] = previews.preview_token(key, url)
     return result
+
+
+def _without_images(result: dict[str, Any]) -> dict[str, Any]:
+    """A get_link_previews result with its images left out, for the text block."""
+    return {
+        **result,
+        "previews": [
+            {**entry, "image": None, "favicon": None} for entry in result["previews"]
+        ],
+    }
 
 
 @mcp.tool(meta=ui.tool_meta(ui.BOOKMARKS_CARD))
@@ -201,30 +247,40 @@ async def list_tags() -> list[dict[str, Any]]:
 if PREVIEWS_ENABLED:
 
     @mcp.tool(meta=ui.APP_ONLY_TOOL_META)
-    async def get_link_previews(urls: list[str]) -> ToolResult:
+    async def get_link_previews(items: list[dict[str, Any]]) -> ToolResult:
         """Internal helper for the Pinboard bookmarks result card; not useful to call directly.
 
         The card calls this itself, after it has rendered, to decorate the
         bookmarks it shows with a favicon, site name, description and
         thumbnail. It returns inline image data that is meaningless as text
         and says nothing about a bookmark that the bookmark tools do not. It
-        only answers for URLs a bookmark tool has just returned.
+        only answers for a bookmark a bookmark tool returned, identified by
+        that bookmark's url and preview_token together.
 
         Args:
-            urls: The http(s) URLs to preview (1-8)
+            items: 1-8 objects, each {"url": a bookmark's url, "token": its preview_token}
         """
-        unique = previews.requested_urls(urls)
-        if link_previews is None:
+        pairs = previews.requested_items(items)
+        key = _key()
+        if link_previews is None or key is None:
             raise RuntimeError("Link previews are not configured")
 
-        result = await link_previews.fetch_many(unique, allowed=offered_urls)
+        # Only a pair this server made itself is looked up. The rest come back
+        # as errors without the bridge hearing of them.
+        allowed = {
+            url for url, token in pairs if previews.token_matches(key, url, token)
+        }
+        result = await link_previews.fetch_many(
+            [url for url, _token in pairs], allowed=allowed
+        )
 
         # A ToolResult, not a dict: FastMCP would serialise a dict a second
         # time as the text block, and every image would cross the wire twice.
-        # The card reads structuredContent; the text is for anything else.
-        found = sum(entry["status"] == "ok" for entry in result["previews"])
+        # The card reads structuredContent. The text block is the same result
+        # as JSON, for a channel that relays only content, with the images
+        # left out so that it stays small.
         return ToolResult(
-            content=f"Link previews for the bookmarks card: {found} of {len(unique)} found.",
+            content=json.dumps(_without_images(result), separators=(",", ":")),
             structured_content=result,
         )
 
