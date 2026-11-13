@@ -20,6 +20,7 @@ Based on the PRD (docs/pinboard_mcp_server_prd.md), the system follows this desi
 
 - **Field mapping**: Pinboard's `description` → `title`, `extended` → `notes` in MCP responses
 - **Authentication**: Uses `PINBOARD_TOKEN` environment variable (format: `username:hex`)
+- **Link previews**: Opt-in with `PINBOARD_PREVIEW_BRIDGE_URL` (`previews.py`). Bookmark URLs, private ones included, are sent to that bridge with the token, so never enable it by default. The HTTP client is `httpx2`, the one FastMCP already depends on
 - **Performance targets**: P50 < 250ms cached, P95 < 600ms cold
 - **Cache strategy**: Seeds from `posts/all` API call, invalidates using `posts/update` timestamp checks
 
@@ -49,6 +50,9 @@ Tools link to `ui://pinboard/<card>@<hash>` cards (see docs/mcp-apps-ui.md). The
 - After changing anything in `cards/src/`, run `npm run build` in `cards/` and commit the regenerated HTML: CI's `npm run check` byte-compares it against a fresh build
 - When a tool's return shape changes, update `cards/fixtures/*.json` too; `tests/test_ui.py` fails when they drift
 - New tools get `meta=ui.tool_meta(<card>)` on their `@mcp.tool` decorator
+- A tool that exists for a card and not for the model (`get_link_previews`) gets `meta=ui.APP_ONLY_TOOL_META` instead, and a docstring that says it isn't useful to call directly, because hosts without MCP Apps still list it. A card calls it with `context.callTool(name, args)`, which never rejects
+- When `get_link_previews`' return shape changes, update `cards/fixtures/previews.json` through `cards/scripts/make-preview-fixtures.ts` (`npm run fixtures:previews`); `tests/test_previews.py` fails when they drift
+- A card renders images only through `<SafeImage>` (inline raster `data:` URIs) and links only through `<SafeLink>`. Cards fetch nothing from the network
 - Check a visual change with `npm run capture` (screenshots in `cards/tmp/captures/`) and `npm run test:browser`
 
 ## Virtual Environment

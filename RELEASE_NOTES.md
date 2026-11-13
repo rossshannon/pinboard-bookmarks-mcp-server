@@ -1,5 +1,25 @@
 # Release Notes
 
+## v1.1.0 - Link cards
+
+### Link previews on the bookmarks card
+
+In a host that supports MCP Apps, each bookmark now renders as a link card: the site and the date saved, the title as a link, your notes, and the tags.
+
+Set `PINBOARD_PREVIEW_BRIDGE_URL` to a pinboard-bridge instance and each row also shows the site's favicon and name, the page's description where the bookmark has no notes, and a thumbnail. The card fetches these itself after it renders, through a new tool that only the card can call, so they don't enter the model's context.
+
+This is off by default. Turning it on sends the URLs of the bookmarks you view, private ones included, to the bridge you name, along with your Pinboard token. See the README's "Link previews" section before enabling it.
+
+### Changes
+
+- New optional environment variable: `PINBOARD_PREVIEW_BRIDGE_URL`
+- New app-only tool, `get_link_previews`, registered only when that variable is set and the result cards are on. Hosts without MCP Apps support may show it in the model's tool list
+- The four bookmark tools add `previews_available: true` to their results when previews are configured. Their results are otherwise unchanged
+- `httpx2` is now a direct dependency. FastMCP already installed it
+- The bookmarks card moves the site and date above the title, with a small tile for the site's initial where there is no favicon
+
+---
+
 ## v1.0.0 - Initial Release
 
 ### 🎉 **First Stable Release**

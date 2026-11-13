@@ -4,10 +4,16 @@ In a host that supports [MCP Apps](https://modelcontextprotocol.io/docs/extensio
 
 | Card | Tools | Shows |
 |---|---|---|
-| `bookmarks` | `search_bookmarks`, `search_bookmarks_extended`, `list_recent_bookmarks`, `list_bookmarks_by_tags` | Title (linked), site, date saved, notes, tags. Tags you searched for are outlined, and private `.tags` are in italics. The first 8 rows show, with a "Show all" button for the rest. |
+| `bookmarks` | `search_bookmarks`, `search_bookmarks_extended`, `list_recent_bookmarks`, `list_bookmarks_by_tags` | Each bookmark as a link card: site and date saved, title (linked), notes, tags. Tags you searched for are outlined, and private `.tags` are in italics. The first 8 rows show, with a "Show all" button for the rest. With [link previews](#link-previews) on, a row also gets the site's favicon and name, the page's description when the bookmark has no notes, and a thumbnail. |
 | `tags` | `list_tags` | Tags by count as a bar chart. The top 20 show, with a filter box and "Show all". Lists are capped at 300 rows, so past 300 tags the button says "Show top 300" and the filter finds the rest. |
 
 The model still gets the same structured result as before. The card is only for the reader. Hosts without MCP Apps support ignore the card entirely.
+
+One more tool exists only for the bookmarks card, and only when link previews are configured:
+
+| Tool | Called by | Returns |
+|---|---|---|
+| `get_link_previews` | The `bookmarks` card, never the model (`_meta.ui.visibility: ["app"]`) | For up to 8 URLs: site name, description, and a favicon and thumbnail as inline `data:` images. |
 
 ## How it fits together
 
@@ -43,8 +49,107 @@ The design is a port of the &Open MCP server's card layer. The shell and sizing 
 - **Theme.** The card adopts the host's theme, its CSS variables (`--color-background-primary` and so on) and its fonts through ext-apps, and follows later changes to them. `card.css` defines `--pb-*` tokens that use the host's variable when there is one. Otherwise they fall back to OKLCH `light-dark()` values, so a host that sends only `theme`, or nothing at all, still looks right.
 - **Links.** `SafeLink` is the only place a card renders an `href`, and only for `http(s)`. The sandbox blocks navigation, so a click goes to the shell's link opener (`link-opener.ts`): a plain click, a Cmd-, Ctrl- or Shift-click, and a middle-click alike. Only an Alt-click, which browsers treat as "download", is left to the browser. Once the bridge is connected it sends `ui/open-link`. Before that it uses ChatGPT's `window.openai.openExternal` when that exists, and otherwise holds the click until the bridge connects. A bookmark with any other scheme shows its title as text.
 - **Errors.** A failed tool call renders an error block. A rejected token gets its own message that points at `PINBOARD_TOKEN`.
+- **Tool calls.** A card can call a server tool itself with `context.callTool(name, args)` (`tool-caller.ts`). The call goes through the host (`tools/call` over the bridge) and resolves to the tool's `structuredContent`. It never rejects. If the bridge isn't connected in time, the host didn't advertise `serverTools`, the host or the tool refuses, or nothing comes back in 15 seconds, it resolves to `{ status: 'unavailable', reason }` and leaves a breadcrumb. `context.canCallTools()` says whether a call has anywhere to go, so a card needn't draw a placeholder for an answer that can't arrive. Before the handshake, on ChatGPT, it uses `window.openai.callTool` if that exists.
+- **Images.** `SafeImage` is the only place a card renders an `<img>`, and only from a `data:image/(webp|png|jpeg);base64,…` URI with its width and height given (`safe-image.ts`). A remote URL, an SVG or anything else draws nothing.
 
 Cards read `structuredContent` defensively, through the small readers in `guards.ts`. A missing or mistyped field drops out instead of throwing.
+
+## Link previews
+
+Link previews are opt-in. They are on when `PINBOARD_PREVIEW_BRIDGE_URL` names a pinboard-bridge instance and the cards themselves are on. Otherwise `get_link_previews` isn't registered, the bookmark tools return exactly what they always have, and the card draws its rows from the bookmark alone.
+
+```
+bookmark tool ──structuredContent { …, previews_available: true }──▶ card renders its rows
+                                                                          │
+card ── tools/call get_link_previews { urls: [≤ 8] } ──▶ host ──▶ server (previews.py)
+                                                                          │  GET {bridge}/preview?url=…&thumbnails=1
+                                                                          │  Authorization: Bearer <PINBOARD_TOKEN>
+                                                                          ▼
+                                                                   pinboard-bridge ──▶ the bookmarked page
+                                                                          │
+card ◀── { previews: [{ url, status, site_name, description, image, favicon, … }] } ◀── sanitised, cached
+  │
+  └─ rows gain favicon, site name, description, thumbnail; card reports its new height
+```
+
+### Privacy
+
+To preview a bookmark, the server sends its URL to the bridge, with the Pinboard token as a bearer token. The bridge then fetches that page. This applies to private bookmarks too, whenever they are in a result the card shows. That is why the feature is off until someone names a bridge they trust.
+
+- The bridge URL must be `https`. Plain `http` is accepted for `localhost` and `127.0.0.1` only. Anything else is ignored with a logged warning, and previews stay off.
+- The server doesn't follow redirects from the bridge, so the token goes to that host only.
+- The token is never logged, and this module's own log lines don't name the bookmark. The HTTP client's own INFO line for each request does include the request URL, as it would for any request.
+- The card fetches nothing. Images arrive inside the tool result as `data:` URIs, which the default MCP Apps CSP (`img-src 'self' data:`) already allows, so the card's CSP is unchanged. The bridge's remote `imageUrl` and `faviconUrl` are never passed on.
+
+### The tool
+
+`get_link_previews(urls)` takes 1 to 8 absolute `http(s)` URLs. Anything else is a `ValueError`. Duplicates are dropped. It returns one entry per URL, in order:
+
+```json
+{
+  "previews": [
+    {
+      "url": "https://example.com/article",
+      "status": "ok",
+      "title": "An article",
+      "description": "What the article is about.",
+      "site_name": "Example",
+      "theme_color": "#1a2b3c",
+      "image": { "data_uri": "data:image/webp;base64,…", "width": 240, "height": 126 },
+      "favicon": { "data_uri": "data:image/png;base64,…", "width": 32, "height": 32 }
+    }
+  ]
+}
+```
+
+- `status` is `ok`, `no_data` (the page has nothing to show), `error` (the bridge couldn't read it, or didn't answer in time) or `rate_limited`. Every field but `url` and `status` is `null` unless the status is `ok`.
+- `retry_after_seconds` is added beside `previews` when any entry is `rate_limited`. It is the bridge's `Retry-After`, held between 1 and 120, or 30 if the bridge gave none.
+- `retry: true` is added to an entry when the bridge was too busy to make that page's thumbnails (`thumbnailsStatus: "busy"`). The entry still carries whatever did arrive.
+
+The tool is marked `_meta.ui.visibility: ["app"]`, so an MCP Apps host keeps it out of the model's tool list and lets only the card call it. A host without MCP Apps support ignores that and lists it like any other tool, so its description says it is for the card and isn't useful to call directly.
+
+Because the bridge's answers are derived from arbitrary web pages, `previews.py` validates every field before the card sees it:
+
+| Field | Rule |
+|---|---|
+| `title`, `description`, `site_name` | Strings only, trimmed, put on one line, capped at 300, 500 and 100 characters. |
+| `image`, `favicon` | `data_uri` must be a base64 `data:` URI of type `image/webp`, `image/png` or `image/jpeg` and nothing else (no parameters, no whitespace), decode as base64, and be at most 60 KB (image) or 12 KB (favicon) long. `width` and `height` must be whole numbers from 1 to 1024. An image that fails any of these is dropped whole. |
+| `theme_color` | A 3- or 6-digit hex colour, lower-cased. Anything else is dropped. The card doesn't use it at present. |
+
+The card applies the image rule again itself (`safe-image.ts`) and renders all text as text.
+
+Limits and caching on the server:
+
+- Each lookup gets 10 seconds, and at most 4 run at once across all batches. A whole batch answers within 12 seconds, and any lookup still running then comes back as `error`, uncached.
+- A bridge response over 1 MB is refused.
+- Results are cached in memory, up to 500 URLs. A finished preview is kept for 6 hours. A `no_data` or `error` result is kept for 10 minutes. So is a preview whose `thumbnailsStatus` is anything but `complete` (`transient`, `unavailable`), so its thumbnails are asked for again later. An older bridge that sends no `thumbnailsStatus` is treated as `complete`.
+- A `busy` result isn't cached at all, because the card is about to ask again and a cached answer would be the same one.
+- When the bridge answers 429, no further lookups in that batch are sent. The ones not yet started come back `rate_limited`, and none of those are cached.
+- The bridge caches page metadata and thumbnails on its own side. Nothing here needs to change for that.
+
+### What the card does
+
+- It asks only when the result carries `previews_available: true` and `context.canCallTools()` is true.
+- It asks about the rows it has drawn, in calls of up to 8 URLs, one call at a time, each URL once (`preview-loader.ts`). The first 8 rows go out as one call as soon as the card renders.
+- Rows past the first 8 exist only after "Show all". Each of those is asked about when it comes near the viewport (`IntersectionObserver`), or straight away, in order, where there is no `IntersectionObserver`.
+- While a row's answer is on its way, the place for its thumbnail is held with a placeholder, so the text wraps once. A row that turns out to have no picture gives the place back.
+- The bookmark's own title is kept. Your notes are kept, and the page's description shows only on a row with no notes.
+- When previews change a row's height, the card calls `remeasure()` and the frame follows.
+
+### When something goes wrong
+
+The card never shows an error for previews. It falls back to the rows it would have drawn without them.
+
+| What happened | What the card does |
+|---|---|
+| The server has no bridge configured | Doesn't ask. |
+| The host doesn't proxy tool calls | Doesn't ask, and holds no placeholders. |
+| The host or the tool refuses a call, or it times out | Stops asking for the life of the card. Rows keep any previews they already have. |
+| A page has no data, or the bridge couldn't read it | That row stays as the bookmark alone. |
+| `rate_limited` entries | Keeps their placeholders, waits `retry_after_seconds`, and asks about them once more. If they are rate-limited again, it stops asking. |
+| `retry: true` entries (bridge busy) | Draws what arrived, and asks about those URLs once more after 5 seconds. Whatever comes back the second time stands. |
+
+Each of these leaves a breadcrumb in the console (`[pinboard-card] callTool:…`, `previews:…`).
 
 ## Working on the cards
 
@@ -64,6 +169,10 @@ If Chromium is already installed (as in Claude Code's cloud containers), point a
 
 Fixtures live in `cards/fixtures/*.json`: normal, empty, hostile (markup and `javascript:` URLs), very long, and error results. `tests/test_ui.py` checks that their shapes match what the real tools return, so the fixtures can't drift from the server.
 
+`fixtures/previews.json` holds `get_link_previews` results for the `rich` and `rich-many` bookmark fixtures: all found, mixed outcomes, rate-limited, busy, and a hostile one (remote, `javascript:` and SVG image sources, markup in strings) that stands for a server that sanitised nothing. `tests/test_previews.py` checks the well-behaved ones against the real sanitiser. The images in it are real WebP and PNG files drawn by `npm run fixtures:previews`. Rerun that only to change what the fixtures say.
+
+The harness (`scripts/card-host.ts`) answers the card's tool calls from those fixtures when a render passes `previews`. Without it, the harness is a host that doesn't proxy tool calls. `npm run capture` takes each paired scenario both ways, as `rich-…png` and `rich+ok-…png`.
+
 CI runs all of the above except `capture`, in the `cards` job.
 
 ### Size
@@ -72,6 +181,7 @@ Each card is about 100 KiB gzipped, most of it React and the ext-apps SDK. The S
 
 ## Hosts
 
+- **App-called tools** are what link previews depend on: the host has to advertise `serverTools` at the handshake and honour `_meta.ui.visibility`. This has been tested against the SDK's own `AppBridge`, not yet against a live host. Where a host doesn't support it, the card shows no previews.
 - **Claude** (web, desktop, mobile) renders MCP Apps for connectors. In &Open's experience, a local stdio server added through `claude_desktop_config.json` didn't render cards, while the same server added as a connector did. If cards don't appear, try it as a connector.
 - **ChatGPT** apps render the same documents. The shell's `window.openai` fast path is for ChatGPT.
 - **Other clients** (Cursor, Claude Code and so on) ignore `_meta.ui` and show the plain result.
