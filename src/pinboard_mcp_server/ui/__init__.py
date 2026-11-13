@@ -62,7 +62,8 @@ BOOKMARKS_CARD = Card(
     description=(
         "Card for search_bookmarks, search_bookmarks_extended, "
         "list_recent_bookmarks and list_bookmarks_by_tags results: each "
-        "bookmark's title as a link, its site and save date, notes and tags."
+        "bookmark as a link card with its site, save date, title, notes and "
+        "tags, and a favicon, description and thumbnail when link previews are on."
     ),
 )
 
@@ -134,6 +135,23 @@ def tool_meta(
         return None
     return {"ui": {"resourceUri": card_uri(card)}}
 
+
+#: The ``_meta`` of a tool that exists for a card and not for the model: a host
+#: keeps it out of the model's tool list and lets only the app call it
+#: (``app.callServerTool``). A host without MCP Apps support ignores this and
+#: lists the tool like any other, so such a tool's description has to say what
+#: it is, and the tool has to be safe for a model to call.
+#:
+#: ``ui.visibility`` is the MCP Apps standard. The two ``openai/`` keys are
+#: ChatGPT's own, from before it: ``widgetAccessible`` is what lets a widget
+#: reach the tool through ``window.openai.callTool``, and ``visibility:
+#: private`` hides it from the model there. OpenAI's reference calls both
+#: compatibility fields beside ``ui.visibility``, and they cost nothing.
+APP_ONLY_TOOL_META: dict[str, Any] = {
+    "ui": {"visibility": ["app"]},
+    "openai/widgetAccessible": True,
+    "openai/visibility": "private",
+}
 
 #: Where hosts serve the fonts they hand a card in ``styles.css.fonts``: the
 #: card injects that CSS (``applyHostFonts``), and without the origins in its

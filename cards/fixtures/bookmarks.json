@@ -554,6 +554,401 @@
       "query": "SupercalifragilisticexpialidociousSupercalifragilisticexpialidociousSupercalifragilisticexpialidociousSupercalifragilisticexpialidociousSupercalifragilisticexpialidociousSupercalifragilisticexpialidocious"
     }
   },
+  "rich": {
+    "structuredContent": {
+      "bookmarks": [
+        {
+          "id": "r000",
+          "url": "https://www.robinsloan.com/notes/home-cooked-app/",
+          "title": "An app can be a home-cooked meal",
+          "tags": [
+            "software",
+            "craft",
+            "essays"
+          ],
+          "notes": "Robin Sloan on writing software for an audience of four. The best argument I know for building small, personal tools.",
+          "saved_at": "2026-10-09T21:14:03Z",
+          "preview_token": "vZb8gvie94cKVw"
+        },
+        {
+          "id": "r001",
+          "url": "https://modelcontextprotocol.io/docs/extensions/apps",
+          "title": "MCP Apps: interactive UI for MCP tools",
+          "tags": [
+            "mcp",
+            "ai",
+            "ui"
+          ],
+          "notes": "",
+          "saved_at": "2026-10-08T07:42:51Z",
+          "preview_token": "z3XIJHfZMTq3_Q"
+        },
+        {
+          "id": "r002",
+          "url": "http://www.paulgraham.com/hwh.html",
+          "title": "How to Work Hard",
+          "tags": [
+            "essays",
+            "work"
+          ],
+          "notes": "",
+          "saved_at": "2026-10-05T18:03:00Z",
+          "preview_token": "U5J3Qdh3sUpUTQ"
+        },
+        {
+          "id": "r003",
+          "url": "https://www.esa.int/Science_Exploration/Space_Science/Euclid",
+          "title": "Euclid: mapping the dark universe",
+          "tags": [
+            "astronomy",
+            "space",
+            ".toread"
+          ],
+          "notes": "First full-colour images are out. The Perseus cluster one is worth opening at full size.",
+          "saved_at": "2026-10-02T11:30:12Z",
+          "preview_token": "QYLV9ltcXTDvZA"
+        },
+        {
+          "id": "r004",
+          "url": "https://web.dev/articles/light-dark",
+          "title": "CSS light-dark()",
+          "tags": [
+            "css",
+            "design",
+            "frontend"
+          ],
+          "notes": "",
+          "saved_at": "2026-09-28T09:05:44Z",
+          "preview_token": "z5ssbo20uR11IA"
+        },
+        {
+          "id": "r005",
+          "url": "https://github.com/simonw/datasette",
+          "title": "simonw/datasette",
+          "tags": [
+            "python",
+            "sqlite",
+            "tools"
+          ],
+          "notes": "For the reading-log project: publish the SQLite file as is.",
+          "saved_at": "2026-09-21T16:48:30Z",
+          "preview_token": "T1DZadLzEyQVKw"
+        }
+      ],
+      "total": 6,
+      "query": "essays tools",
+      "previews_available": true
+    }
+  },
+  "rich-many": {
+    "structuredContent": {
+      "bookmarks": [
+        {
+          "id": "r100",
+          "url": "https://www.robinsloan.com/notes/home-cooked-app/",
+          "title": "An app can be a home-cooked meal",
+          "tags": [
+            "software",
+            "craft",
+            "essays"
+          ],
+          "notes": "Robin Sloan on writing software for an audience of four. The best argument I know for building small, personal tools.",
+          "saved_at": "2026-10-09T21:14:03Z",
+          "preview_token": "vZb8gvie94cKVw"
+        },
+        {
+          "id": "r101",
+          "url": "https://ciechanow.ski/mechanical-watch/",
+          "title": "Mechanical Watch",
+          "tags": [
+            "design",
+            "explainers",
+            "engineering"
+          ],
+          "notes": "",
+          "saved_at": "2026-09-18T20:11:09Z",
+          "preview_token": "5bKQu3yFMO6ezA"
+        },
+        {
+          "id": "r102",
+          "url": "https://www.nytimes.com/interactive/2026/03/14/science/deep-sea-map.html",
+          "title": "Mapping the sea floor, one ping at a time",
+          "tags": [
+            "science",
+            "maps",
+            ".toread"
+          ],
+          "notes": "",
+          "saved_at": "2026-09-15T06:40:00Z",
+          "preview_token": "TUnJgqDQrygzKA"
+        },
+        {
+          "id": "r103",
+          "url": "https://www.joshwcomeau.com/css/interactive-guide-to-grid/",
+          "title": "An Interactive Guide to CSS Grid",
+          "tags": [
+            "css",
+            "design",
+            "frontend"
+          ],
+          "notes": "Keep for the next time subgrid comes up.",
+          "saved_at": "2026-09-12T13:22:41Z",
+          "preview_token": "bBakXdzDcyGUpw"
+        },
+        {
+          "id": "r104",
+          "url": "https://stripe.com/blog/payment-api-design",
+          "title": "Stripe's payments APIs: the first ten years",
+          "tags": [
+            "api",
+            "design",
+            "engineering"
+          ],
+          "notes": "",
+          "saved_at": "2026-09-09T10:02:17Z",
+          "preview_token": "40eNzxqXedzPLg"
+        },
+        {
+          "id": "r105",
+          "url": "https://www.typewolf.com/site-of-the-day",
+          "title": "Typewolf: site of the day",
+          "tags": [
+            "typography",
+            "design",
+            "inspiration"
+          ],
+          "notes": "",
+          "saved_at": "2026-09-04T08:15:00Z",
+          "preview_token": "GxrSpoaXs6lnvQ"
+        },
+        {
+          "id": "r106",
+          "url": "https://craigmod.com/essays/fast_software/",
+          "title": "Fast Software, the Best Software",
+          "tags": [
+            "software",
+            "design",
+            "essays"
+          ],
+          "notes": "Speed as a feature you can feel.",
+          "saved_at": "2026-08-30T22:47:05Z",
+          "preview_token": "XNO238S0g-AgAA"
+        },
+        {
+          "id": "r107",
+          "url": "https://www.figma.com/blog/how-figmas-multiplayer-technology-works/",
+          "title": "How Figma's multiplayer technology works",
+          "tags": [
+            "design",
+            "engineering",
+            "crdt"
+          ],
+          "notes": "",
+          "saved_at": "2026-08-27T15:31:50Z",
+          "preview_token": "8Elry4sCMSiDdQ"
+        },
+        {
+          "id": "r108",
+          "url": "https://en.wikipedia.org/wiki/Dieter_Rams",
+          "title": "Dieter Rams",
+          "tags": [
+            "design",
+            "people"
+          ],
+          "notes": "",
+          "saved_at": "2026-08-22T19:08:26Z",
+          "preview_token": "RcbMNwL_z0YQ7A"
+        },
+        {
+          "id": "r109",
+          "url": "https://linear.app/method",
+          "title": "The Linear Method",
+          "tags": [
+            "design",
+            "product",
+            "process"
+          ],
+          "notes": "",
+          "saved_at": "2026-08-19T12:00:03Z",
+          "preview_token": "0Ulng6A08sE6kw"
+        },
+        {
+          "id": "r110",
+          "url": "https://www.gov.uk/guidance/government-design-principles",
+          "title": "Government Design Principles",
+          "tags": [
+            "design",
+            "principles",
+            "public-sector"
+          ],
+          "notes": "Start with user needs. Still the list to beat.",
+          "saved_at": "2026-08-11T09:44:38Z",
+          "preview_token": "Md4KvZAAlBe4gw"
+        },
+        {
+          "id": "r111",
+          "url": "https://rauno.me/craft/interaction-design",
+          "title": "Invisible Details of Interaction Design",
+          "tags": [
+            "design",
+            "interaction",
+            "craft"
+          ],
+          "notes": "",
+          "saved_at": "2026-08-06T17:26:12Z",
+          "preview_token": "NgsOR9ZIN8aRgQ"
+        },
+        {
+          "id": "r112",
+          "url": "https://www.youtube.com/watch?v=PUv66718DII",
+          "title": "Inventing on Principle",
+          "tags": [
+            "talks",
+            "design",
+            "programming"
+          ],
+          "notes": "Bret Victor, 2012. Rewatch yearly.",
+          "saved_at": "2026-07-29T21:55:00Z",
+          "preview_token": "_Uo4xSwruedmfg"
+        },
+        {
+          "id": "r113",
+          "url": "https://practicaltypography.com/typography-in-ten-minutes.html",
+          "title": "Typography in ten minutes",
+          "tags": [
+            "typography",
+            "design",
+            "reference"
+          ],
+          "notes": "",
+          "saved_at": "2026-07-24T07:12:49Z",
+          "preview_token": "nmQr_nBF48bo-g"
+        },
+        {
+          "id": "r114",
+          "url": "https://oklch.com/",
+          "title": "OKLCH Color Picker & Converter",
+          "tags": [
+            "css",
+            "colour",
+            "design",
+            "tools"
+          ],
+          "notes": "",
+          "saved_at": "2026-07-18T14:38:21Z",
+          "preview_token": "3s9YH3h0KZhHfw"
+        },
+        {
+          "id": "r115",
+          "url": "https://modelcontextprotocol.io/docs/extensions/apps",
+          "title": "MCP Apps: interactive UI for MCP tools",
+          "tags": [
+            "mcp",
+            "ai",
+            "ui"
+          ],
+          "notes": "",
+          "saved_at": "2026-10-08T07:42:51Z",
+          "preview_token": "z3XIJHfZMTq3_Q"
+        },
+        {
+          "id": "r116",
+          "url": "http://www.paulgraham.com/hwh.html",
+          "title": "How to Work Hard",
+          "tags": [
+            "essays",
+            "work"
+          ],
+          "notes": "",
+          "saved_at": "2026-10-05T18:03:00Z",
+          "preview_token": "U5J3Qdh3sUpUTQ"
+        },
+        {
+          "id": "r117",
+          "url": "https://www.esa.int/Science_Exploration/Space_Science/Euclid",
+          "title": "Euclid: mapping the dark universe",
+          "tags": [
+            "astronomy",
+            "space",
+            ".toread"
+          ],
+          "notes": "First full-colour images are out. The Perseus cluster one is worth opening at full size.",
+          "saved_at": "2026-10-02T11:30:12Z",
+          "preview_token": "QYLV9ltcXTDvZA"
+        },
+        {
+          "id": "r118",
+          "url": "https://web.dev/articles/light-dark",
+          "title": "CSS light-dark()",
+          "tags": [
+            "css",
+            "design",
+            "frontend"
+          ],
+          "notes": "",
+          "saved_at": "2026-09-28T09:05:44Z",
+          "preview_token": "z5ssbo20uR11IA"
+        },
+        {
+          "id": "r119",
+          "url": "https://github.com/simonw/datasette",
+          "title": "simonw/datasette",
+          "tags": [
+            "python",
+            "sqlite",
+            "tools"
+          ],
+          "notes": "For the reading-log project: publish the SQLite file as is.",
+          "saved_at": "2026-09-21T16:48:30Z",
+          "preview_token": "T1DZadLzEyQVKw"
+        }
+      ],
+      "total": 20,
+      "tags": [
+        "design"
+      ],
+      "from_date": null,
+      "to_date": null,
+      "previews_available": true
+    }
+  },
+  "deceptive-host": {
+    "structuredContent": {
+      "bookmarks": [
+        {
+          "id": "d1",
+          "url": "https://accounts.google.com.security-check.evil.example/signin?continue=mail",
+          "title": "Sign in to continue",
+          "tags": [
+            "phishing",
+            "examples"
+          ],
+          "notes": "Kept as an example for the security talk: the real site is the last part of the host.",
+          "saved_at": "2026-10-11T09:12:00Z",
+          "preview_token": "4R7t9aGkMSjldg"
+        },
+        {
+          "id": "d2",
+          "url": "https://paypal.com.account-verify.example/login",
+          "title": "Confirm your account",
+          "tags": [
+            "phishing",
+            "examples"
+          ],
+          "notes": "",
+          "saved_at": "2026-10-10T17:40:00Z",
+          "preview_token": "X_PJQ-67eok1-A"
+        }
+      ],
+      "total": 2,
+      "tags": [
+        "phishing"
+      ],
+      "from_date": null,
+      "to_date": null,
+      "previews_available": true
+    }
+  },
   "error": {
     "isError": true,
     "content": [

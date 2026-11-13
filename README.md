@@ -17,6 +17,7 @@ This server provides LLMs with the ability to search, filter, and retrieve bookm
 - **Rate limiting** respects Pinboard's 3-second guideline between API calls
 - **Field mapping** converts Pinboard's legacy field names to intuitive ones (description→title, extended→notes)
 - **Result cards** for MCP Apps hosts: bookmarks and tags render as interactive cards in Claude, ChatGPT and other hosts that support [MCP Apps](https://modelcontextprotocol.io/docs/extensions/apps); other hosts see plain results as before
+- **Link previews** on those cards, optionally: a favicon, site name, description and thumbnail for each bookmark, fetched through a [pinboard-bridge](#link-previews) instance you name
 - **Comprehensive testing** with integration test harnesses and CI validation
 
 ## Installation
@@ -134,14 +135,31 @@ What are my most used tags?
 
 ### Environment Variables
 
-- `PINBOARD_TOKEN` (required): Your Pinboard API token in format `username:token`
-- `PINBOARD_MCP_APPS_UI` (optional): set to `false` to turn off the result cards; on by default
+| Variable | Required | What it does |
+|---|---|---|
+| `PINBOARD_TOKEN` | Yes | Your Pinboard API token, in the format `username:token`. |
+| `PINBOARD_MCP_APPS_UI` | No | Set to `false` (or `0`, `no`, `off`) to turn off the result cards. On by default. |
+| `PINBOARD_PREVIEW_BRIDGE_URL` | No | Base URL of a pinboard-bridge instance, for example `https://example-bridge.herokuapp.com`. Turns on [link previews](#link-previews) on the bookmarks card. Off when unset. Must be `https`, except for `http://localhost` and `http://127.0.0.1`. |
 
 ### Result cards (MCP Apps)
 
-Each tool links to a `ui://pinboard/…` card: a list of bookmarks (title, site, date, notes and tags, with the tags you searched for highlighted) for the four bookmark tools, and a bar chart of your most-used tags with a filter for `list_tags`. The cards follow the host's light or dark theme, use the host's fonts, open links through the host, and load nothing else from the network. Hosts without MCP Apps support ignore them.
+Each tool links to a `ui://pinboard/…` card. The four bookmark tools share one that draws each bookmark as a link card: the site and date saved, the title as a link, your notes, and the tags, with the tags you searched for highlighted. `list_tags` gets a bar chart of your most-used tags with a filter. The cards follow the host's light or dark theme, use the host's fonts, open links through the host, and load nothing else from the network. Hosts without MCP Apps support ignore them.
 
 The cards are React, built into self-contained HTML under `src/pinboard_mcp_server/ui/generated/` and shipped with the package, so running the server needs no Node. See [docs/mcp-apps-ui.md](docs/mcp-apps-ui.md) for how they work and how to change them.
+
+### Link previews
+
+With `PINBOARD_PREVIEW_BRIDGE_URL` set, each row of the bookmarks card also shows what the page says about itself: its favicon and site name, its description where the bookmark has no notes of its own, and a thumbnail. The bookmark's title stays the one you gave it.
+
+The previews come from a pinboard-bridge instance, which fetches each page and reads its metadata. The card asks for them after it has rendered, through a tool only the card can call (`get_link_previews`), so they never enter the model's context. Images arrive inline in the tool result, so the card still loads nothing from the network.
+
+**This is off by default, and you should know what turning it on does.** To preview a bookmark the server sends its URL to the bridge, along with your Pinboard token to authenticate. That includes the URLs of your private bookmarks whenever they appear in a result. The bridge then requests those pages. Only point this at a bridge you run or trust.
+
+A row always shows the whole host its link goes to. The page's own name for itself appears beside the host, never in place of it, and not at all if it names another site.
+
+If the bridge is slow, rate-limited or down, or the host can't call tools for a card, the card shows the bookmarks without previews. Nothing else changes.
+
+Hosts without MCP Apps support may list `get_link_previews` to the model like any other tool. Its description says it isn't useful to call directly. It only looks up a URL that arrives with the token the server issued for that bookmark, so it can't be used to make the bridge fetch an arbitrary URL with your token.
 
 ### Rate Limiting
 

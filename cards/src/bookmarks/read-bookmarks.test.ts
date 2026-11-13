@@ -23,6 +23,20 @@ describe('readBookmarks', () => {
     expect(view.total).toBe(1)
   })
 
+  it('reads each row’s preview token, when it is one', () => {
+    const view = readBookmarks({
+      bookmarks: [
+        { preview_token: 'abcDEF123-_xyz', url: 'https://a.example/' },
+        { url: 'https://b.example/' },
+        { preview_token: '', url: 'https://c.example/' },
+        { preview_token: 42, url: 'https://d.example/' },
+        { preview_token: 'x'.repeat(129), url: 'https://e.example/' },
+      ],
+    })
+
+    expect(view.rows.map(row => row.previewToken)).toEqual(['abcDEF123-_xyz', undefined, undefined, undefined, undefined])
+  })
+
   it('reads no rows from a payload without a bookmark list', () => {
     expect(readBookmarks({}).rows).toEqual([])
   })

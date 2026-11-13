@@ -7,6 +7,10 @@
  *
  * Writes `tmp/captures/<card>/<scenario>-<theme>-<width>.png` (gitignored).
  * Renders through the same host as the browser checks.
+ *
+ * A bookmarks fixture that offers link previews is captured once as a host
+ * that cannot call tools draws it, and once more for each preview scenario
+ * paired with it in `PREVIEW_RUNS`, as `<scenario>+<previews>-…png`.
  */
 
 import console from 'node:console'
@@ -18,7 +22,9 @@ import { fileURLToPath } from 'node:url'
 import type { CardName } from './build-cards.ts'
 import type { Theme } from './card-host.ts'
 
-import { CARD_FIXTURES } from '../fixtures/index.ts'
+import type { PreviewScenario } from '../fixtures/index.ts'
+
+import { CARD_FIXTURES, PREVIEW_RUNS } from '../fixtures/index.ts'
 import { CARDS } from './build-cards.ts'
 import { launchBrowser, renderCard } from './card-host.ts'
 
@@ -33,14 +39,18 @@ try {
     if (onlyCard !== undefined && card !== onlyCard) continue
     for (const scenario of Object.keys(CARD_FIXTURES[card])) {
       if (onlyScenario !== undefined && scenario !== onlyScenario) continue
-      for (const theme of THEMES) {
-        for (const width of WIDTHS) {
-          const { errors, page } = await renderCard(browser, { card, scenario, theme, width })
-          const file = path.join(outRoot, card, `${scenario}-${theme}-${String(width)}.png`)
-          mkdirSync(path.dirname(file), { recursive: true })
-          await page.locator('#card').screenshot({ path: file })
-          await page.close()
-          console.log(`✓ ${path.relative(process.cwd(), file)}${errors.length > 0 ? `  (console errors: ${errors.join('; ')})` : ''}`)
+      const runs: ReadonlyArray<PreviewScenario | undefined> = [undefined, ...(card === 'bookmarks' ? PREVIEW_RUNS[scenario] ?? [] : [])]
+      for (const previews of runs) {
+        for (const theme of THEMES) {
+          for (const width of WIDTHS) {
+            const { errors, page } = await renderCard(browser, { card, scenario, theme, width, ...(previews === undefined ? {} : { previews }) })
+            const name = previews === undefined ? scenario : `${scenario}+${previews}`
+            const file = path.join(outRoot, card, `${name}-${theme}-${String(width)}.png`)
+            mkdirSync(path.dirname(file), { recursive: true })
+            await page.locator('#card').screenshot({ path: file })
+            await page.close()
+            console.log(`✓ ${path.relative(process.cwd(), file)}${errors.length > 0 ? `  (console errors: ${errors.join('; ')})` : ''}`)
+          }
         }
       }
     }

@@ -16,8 +16,8 @@ export const BookmarksSkeleton = (): ReactNode => (
       <SkeletonLine width="55%" />
     </div>
     <div className="skeleton-row">
-      <SkeletonLine width="80%" />
       <SkeletonLine width="35%" />
+      <SkeletonLine width="80%" />
       <div className="skeleton-chips">
         <SkeletonChip />
         <SkeletonChip width="3rem" />

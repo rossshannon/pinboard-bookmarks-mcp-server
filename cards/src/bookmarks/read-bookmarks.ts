@@ -11,7 +11,9 @@
  * | `list_bookmarks_by_tags`     | `tags`, `from_date`, `to_date`         |
  *
  * so the subject is read from the payload's shape, never from a tool name
- * the card is not told. Every field goes through a guard; a malformed one
+ * the card is not told. Any of them also sends `previews_available: true`
+ * when the server has a preview bridge configured, and leaves the key out
+ * otherwise. Every field goes through a guard; a malformed one
  * drops out rather than throwing, and a row with no usable URL or title keeps
  * its place with whatever it does have.
  */
@@ -28,6 +30,20 @@ export interface BookmarkRow {
   readonly notes: string | undefined
   readonly tags: readonly string[]
   readonly savedAt: string | undefined
+  /**
+   * The server's token for this bookmark's URL, which `get_link_previews`
+   * wants back with it. `undefined` when the server sent none: that row is
+   * not asked about.
+   */
+  readonly previewToken: string | undefined
+}
+
+/** Far longer than the server's fourteen characters; a token over it is not one. */
+const MAX_PREVIEW_TOKEN_LENGTH = 128
+
+const readPreviewToken = (value: unknown): string | undefined => {
+  const token = readText(value)
+  return token === undefined || token === '' || token.length > MAX_PREVIEW_TOKEN_LENGTH ? undefined : token
 }
 
 export type BookmarksSubject =
@@ -39,6 +55,8 @@ export type BookmarksSubject =
 export interface BookmarksView {
   readonly subject: BookmarksSubject
   readonly rows: readonly BookmarkRow[]
+  /** Whether the server offered link previews: the card may call `get_link_previews`. */
+  readonly previewsAvailable: boolean
   /** The tool's `total` when it is a count, else the rows read. */
   readonly total: number
 }
@@ -63,6 +81,7 @@ const readRow = (value: unknown, index: number): BookmarkRow | undefined => {
     host,
     key: readText(value['id']) ?? `${url ?? ''}#${String(index)}`,
     notes: readText(value['notes'])?.trim(),
+    previewToken: readPreviewToken(value['preview_token']),
     savedAt: readText(value['saved_at']),
     tags: readTextList(value['tags']),
     title,
@@ -76,7 +95,13 @@ export const readBookmarks = (data: Record<string, unknown>): BookmarksView => {
     const row = readRow(value, index)
     return row === undefined ? [] : [row]
   })
-  return { rows, subject: readSubject(data), total: readCount(data['total']) ?? rows.length }
+  return {
+    // `true` and nothing else: a card does not go calling tools on a maybe.
+    previewsAvailable: data['previews_available'] === true,
+    rows,
+    subject: readSubject(data),
+    total: readCount(data['total']) ?? rows.length,
+  }
 }
 
 /**

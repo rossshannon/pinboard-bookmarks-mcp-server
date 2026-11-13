@@ -17,8 +17,12 @@ import { describe, expect, it, vi } from 'vitest'
 
 import type { CardWiringCallbacks } from './card-shell.tsx'
 
+import type { ToolCallingApp } from './tool-caller.ts'
+
+import { createBreadcrumbLog } from './breadcrumbs.ts'
 import { wireCardApp } from './card-shell.tsx'
 import { applyHostLook } from './host-theme.ts'
+import { createToolCaller } from './tool-caller.ts'
 
 const TEST_APP_INFO = { name: 'pinboard-test-card', version: '1' }
 const TEST_HOST_INFO = { name: 'pinboard-test-host', version: '1' }
@@ -146,6 +150,63 @@ describe('wireCardApp (bridge)', () => {
       expect(onHostContextChanged).toHaveBeenCalled()
     })
     expect(document.documentElement.dataset['theme']).toBe('dark')
+  })
+
+  // The shell's tool caller against the real SDK pair: the same narrowing
+  // cast the shell makes, so a change in `callServerTool`'s shape fails here.
+  describe('a card calling a server tool', () => {
+    const connected = async (bridge: AppBridge): Promise<ReturnType<typeof createToolCaller>> => {
+      const [viewTransport, hostTransport] = InMemoryTransport.createLinkedPair()
+      const app = new App(TEST_APP_INFO, TEST_CAPABILITIES, { autoResize: false })
+      wireCardApp(app, { onError: vi.fn(), onResult: vi.fn() })
+      await bridge.connect(hostTransport)
+      await app.connect(viewTransport)
+      vi.spyOn(console, 'log').mockImplementation(() => { /* breadcrumbs are not under test */ })
+      return createToolCaller(() => app as unknown as ToolCallingApp, createBreadcrumbLog())
+    }
+
+    it('sends tools/call through a host that proxies tool calls, and reads the answer', async () => {
+      const bridge = new AppBridge(null, TEST_HOST_INFO, { serverTools: {} })
+      const onCallTool = vi.fn().mockResolvedValue({ content: [], structuredContent: { previews: [] } })
+      bridge.oncalltool = onCallTool
+      const tools = await connected(bridge)
+
+      expect(tools.canCallTools()).toBe(true)
+      const outcome = await tools.callTool('get_link_previews', { urls: ['https://example.com/'] })
+
+      expect(outcome).toEqual({ data: { previews: [] }, status: 'ok' })
+      expect(onCallTool).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({ arguments: { urls: ['https://example.com/'] }, name: 'get_link_previews' }),
+        expect.anything(),
+      )
+    })
+
+    it('is unavailable, with nothing sent, on a host that does not', async () => {
+      const bridge = new AppBridge(null, TEST_HOST_INFO, {})
+      const onCallTool = vi.fn()
+      bridge.oncalltool = onCallTool
+      const tools = await connected(bridge)
+
+      expect(tools.canCallTools()).toBe(false)
+      expect(await tools.callTool('get_link_previews', { urls: [] })).toEqual({ reason: 'no-capability', status: 'unavailable' })
+      expect(onCallTool).not.toHaveBeenCalled()
+    })
+
+    it('is unavailable when the host refuses the call', async () => {
+      const bridge = new AppBridge(null, TEST_HOST_INFO, { serverTools: {} })
+      bridge.oncalltool = vi.fn().mockRejectedValue(new Error('Tool get_link_previews is not callable by this app'))
+      const tools = await connected(bridge)
+
+      expect(await tools.callTool('get_link_previews', { urls: [] })).toEqual({ reason: 'rejected', status: 'unavailable' })
+    })
+
+    it('is unavailable when the tool itself fails', async () => {
+      const bridge = new AppBridge(null, TEST_HOST_INFO, { serverTools: {} })
+      bridge.oncalltool = vi.fn().mockResolvedValue({ content: [{ text: 'Must provide 1-8 URLs', type: 'text' }], isError: true })
+      const tools = await connected(bridge)
+
+      expect(await tools.callTool('get_link_previews', { urls: [] })).toEqual({ reason: 'tool-error', status: 'unavailable' })
+    })
   })
 
   it('forwards a transport error to onError', async () => {
