@@ -177,25 +177,100 @@ class TestRequestedUrls:
             [f"https://example.com/{n}" for n in range(9)],
             "https://example.com",
             None,
-            ["javascript:alert(1)"],
-            ["data:text/html,<script>alert(1)</script>"],
-            ["file:///etc/passwd"],
-            ["//example.com/protocol-relative"],
-            ["/relative"],
-            ["https://"],
-            [" https://example.com"],
+            {"url": "https://example.com"},
             [42],
-            ["https://example.com/" + "a" * 2100],
-            ["https://ok.example", "ftp://not-ok.example"],
+            [None],
+            ["https://ok.example", ["https://nested.example"]],
         ],
     )
-    def test_rejects_anything_but_one_to_eight_web_urls(self, urls):
+    def test_rejects_a_request_of_the_wrong_shape(self, urls):
         with pytest.raises(ValueError):
             previews.requested_urls(urls)
 
     def test_takes_exactly_eight(self):
         urls = [f"https://example.com/{n}" for n in range(8)]
         assert previews.requested_urls(urls) == urls
+
+    def test_does_not_judge_the_urls_themselves(self):
+        # One bad URL is its own row's problem (an `error` entry from
+        # fetch_many), not a reason to refuse the other seven.
+        urls = ["https://ok.example/", "javascript:alert(1)", ""]
+        assert previews.requested_urls(urls) == urls
+
+
+class TestIsWebUrl:
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://example.com",
+            "http://example.com/a?b=c#d",
+            "HTTPS://EXAMPLE.COM/",
+            "https://example.com/" + "a" * (2048 - len("https://example.com/")),
+        ],
+    )
+    def test_takes_an_absolute_http_or_https_url(self, url):
+        assert previews.is_web_url(url)
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "javascript:alert(1)",
+            "data:text/html,<script>alert(1)</script>",
+            "file:///etc/passwd",
+            "ftp://example.com/",
+            "//example.com/protocol-relative",
+            "/relative",
+            "example.com",
+            "https://",
+            "https:///path-only",
+            " https://example.com",
+            "https://example.com ",
+            "https://example.com/a b",
+            "https://example.com/a\nb",
+            "https://[not-an-address/",
+            "",
+            "https://example.com/" + "a" * 2100,
+        ],
+    )
+    def test_refuses_anything_else(self, url):
+        assert not previews.is_web_url(url)
+
+
+class TestOfferedUrls:
+    def test_knows_what_it_was_given_and_nothing_else(self):
+        offered = previews.OfferedUrls()
+        offered.add(["https://a.example/", "https://b.example/"])
+
+        assert "https://a.example/" in offered
+        assert "https://b.example/" in offered
+        assert "https://a.example" not in offered
+        assert "https://c.example/" not in offered
+        assert None not in offered
+
+    def test_ignores_what_is_not_a_string(self):
+        offered = previews.OfferedUrls()
+        offered.add([None, 42, "https://a.example/"])
+
+        assert len(offered) == 1
+
+    def test_is_bounded_and_forgets_the_least_recently_used(self):
+        offered = previews.OfferedUrls(maxsize=3)
+        offered.add(["https://1.example/", "https://2.example/", "https://3.example/"])
+        # Being asked about counts as use.
+        assert "https://1.example/" in offered
+
+        offered.add(["https://4.example/"])
+
+        assert len(offered) == 3
+        assert "https://1.example/" in offered
+        assert "https://2.example/" not in offered
+        assert "https://4.example/" in offered
+
+    def test_holds_five_thousand_by_default(self):
+        offered = previews.OfferedUrls()
+        offered.add(f"https://example.com/{n}" for n in range(5100))
+
+        assert len(offered) == 5000
 
 
 class TestSanitisePreview:
@@ -488,7 +563,7 @@ class TestFetchMany:
         bridge = Bridge()
         client = bridge.client()
 
-        result = await client.fetch_many(["https://example.com/a b?x=1&y=2"])
+        result = await client.fetch_many(["https://example.com/a%20b?x=1&y=2"])
 
         (request,) = bridge.requests
         assert request.method == "GET"
@@ -496,12 +571,12 @@ class TestFetchMany:
         assert request.url.host == "bridge.example"
         assert request.url.path == "/preview"
         assert dict(request.url.params) == {
-            "url": "https://example.com/a b?x=1&y=2",
+            "url": "https://example.com/a%20b?x=1&y=2",
             "thumbnails": "1",
         }
         assert request.headers["Authorization"] == f"Bearer {TOKEN}"
         assert result["previews"][0]["status"] == "ok"
-        assert result["previews"][0]["url"] == "https://example.com/a b?x=1&y=2"
+        assert result["previews"][0]["url"] == "https://example.com/a%20b?x=1&y=2"
         assert "retry_after_seconds" not in result
         await client.aclose()
 
@@ -566,12 +641,19 @@ class TestFetchMany:
         "response",
         [
             httpx2.Response(200, json={"preview": None, "previewStatus": "no_data"}),
+            httpx2.Response(
+                200,
+                json={
+                    "preview": None,
+                    "previewStatus": "error",
+                    "thumbnailsStatus": "transient",
+                },
+            ),
             httpx2.Response(400, json={"error": "unreachable"}),
-            httpx2.Response(500),
         ],
-        ids=["no_data", "bad-url", "server-error"],
+        ids=["no_data", "page-fetch-failed", "bad-url"],
     )
-    async def test_a_miss_is_kept_for_ten_minutes_only(self, response):
+    async def test_a_page_level_miss_is_kept_for_ten_minutes_only(self, response):
         clock = Clock()
         bridge = Bridge(lambda request: response)
         client = bridge.client(timer=clock)
@@ -720,25 +802,112 @@ class TestFetchMany:
 
         assert result["previews"][0]["status"] == "error"
 
-    async def test_a_batch_answers_in_time_with_what_it_has(self):
+    async def test_a_call_answers_in_time_and_marks_what_is_still_running_pending(
+        self,
+    ):
+        release = asyncio.Event()
+
         async def respond(request: httpx2.Request) -> httpx2.Response:
             if "slow" in request.url.params["url"]:
-                await asyncio.sleep(5)
+                await release.wait()
             return httpx2.Response(200, json=bridge_payload())
 
         bridge = Bridge(respond)
-        client = bridge.client(batch_timeout=0.1)
+        client = bridge.client(batch_timeout=0.05)
 
         result = await client.fetch_many(
             ["https://example.com/fast", "https://example.com/slow"]
         )
 
-        assert [entry["status"] for entry in result["previews"]] == ["ok", "error"]
-        # Out of time is not a verdict on the page: it is asked about again.
-        await client.fetch_many(["https://example.com/slow"])
-        assert bridge.asked().count("https://example.com/slow") == 2
+        assert [entry["status"] for entry in result["previews"]] == ["ok", "pending"]
+        assert result["previews"][1] == {
+            "url": "https://example.com/slow",
+            "status": "pending",
+            "title": None,
+            "description": None,
+            "site_name": None,
+            "theme_color": None,
+            "image": None,
+            "favicon": None,
+        }
 
-    async def test_no_more_than_four_lookups_run_at_once(self):
+        # The lookup was not cut off. Asking again while it runs joins it
+        # rather than sending a second request...
+        again = asyncio.ensure_future(client.fetch_many(["https://example.com/slow"]))
+        await asyncio.sleep(0)
+        release.set()
+        assert (await again)["previews"][0]["status"] == "ok"
+        assert bridge.asked().count("https://example.com/slow") == 1
+
+        # ...and its answer went into the cache.
+        await client.fetch_many(["https://example.com/slow"])
+        assert bridge.asked().count("https://example.com/slow") == 1
+
+    async def test_time_spent_queued_is_not_charged_to_a_lookup(self):
+        # Sixteen lookups, eight at a time, each taking most of its own
+        # timeout: the second eight wait longer than that in the queue, and
+        # still succeed, because the clock starts when a lookup is sent.
+        async def respond(request: httpx2.Request) -> httpx2.Response:
+            await asyncio.sleep(0.15)
+            return httpx2.Response(200, json=bridge_payload())
+
+        client = Bridge(respond).client(request_timeout=0.25, batch_timeout=5)
+
+        first, second = await asyncio.gather(
+            client.fetch_many([f"https://example.com/{n}" for n in range(8)]),
+            client.fetch_many([f"https://example.org/{n}" for n in range(8)]),
+        )
+
+        assert all(
+            entry["status"] == "ok"
+            for result in (first, second)
+            for entry in result["previews"]
+        )
+
+    async def test_the_defaults_let_one_call_finish_inside_its_deadline(self):
+        # A whole call goes out in one wave, and one wave's timeout fits in
+        # the deadline with room to spare; the deadline in turn fits inside
+        # the fifteen seconds the card waits.
+        assert previews.MAX_CONCURRENCY >= previews.MAX_URLS_PER_CALL
+        assert previews.REQUEST_TIMEOUT_SECONDS < previews.BATCH_TIMEOUT_SECONDS
+        # Longer than the bridge's own seven-second deadline, so its slowest
+        # honest answer still arrives, and one wave of the bridge's eight jobs.
+        assert previews.REQUEST_TIMEOUT_SECONDS == 8.5
+        assert previews.MAX_CONCURRENCY == previews.MAX_URLS_PER_CALL == 8
+        assert previews.BATCH_TIMEOUT_SECONDS < 15
+
+    async def test_a_pending_lookup_that_then_fails_is_not_left_dangling(self):
+        release = asyncio.Event()
+
+        async def respond(request: httpx2.Request) -> httpx2.Response:
+            await release.wait()
+            raise httpx2.ConnectError("gone")
+
+        client = Bridge(respond).client(batch_timeout=0.05)
+
+        first = await client.fetch_many(["https://example.com/a"])
+        assert first["previews"][0]["status"] == "pending"
+        release.set()
+        for _ in range(5):
+            await asyncio.sleep(0)
+
+        assert client._in_flight == {}
+
+    async def test_closing_cancels_lookups_still_running(self):
+        async def respond(request: httpx2.Request) -> httpx2.Response:
+            await asyncio.sleep(30)
+            return httpx2.Response(200, json=bridge_payload())
+
+        client = Bridge(respond).client(batch_timeout=0.05)
+        await client.fetch_many(["https://example.com/a"])
+        (task,) = client._in_flight.values()
+
+        await client.aclose()
+        await asyncio.gather(task, return_exceptions=True)
+
+        assert task.cancelled()
+
+    async def test_a_whole_call_goes_out_at_once_and_a_second_call_queues(self):
         bridge = Bridge()
         bridge.hold = asyncio.Event()
         client = bridge.client()
@@ -746,24 +915,306 @@ class TestFetchMany:
         first = asyncio.ensure_future(
             client.fetch_many([f"https://example.com/{n}" for n in range(8)])
         )
-        # A second batch shares the same bound.
+        # A second call shares the same bound.
         second = asyncio.ensure_future(
             client.fetch_many([f"https://example.org/{n}" for n in range(8)])
         )
         for _ in range(20):
             await asyncio.sleep(0)
-        assert bridge.in_flight == 4
+        assert bridge.in_flight == 8
 
         bridge.hold.set()
         results = await asyncio.gather(first, second)
 
-        assert bridge.most_in_flight == 4
+        assert bridge.most_in_flight == 8
         assert len(bridge.requests) == 16
         assert all(
             entry["status"] == "ok"
             for result in results
             for entry in result["previews"]
         )
+
+    async def test_two_calls_about_the_same_url_share_one_lookup(self):
+        bridge = Bridge()
+        bridge.hold = asyncio.Event()
+        client = bridge.client()
+
+        first = asyncio.ensure_future(client.fetch_many(["https://example.com/a"]))
+        second = asyncio.ensure_future(client.fetch_many(["https://example.com/a"]))
+        for _ in range(5):
+            await asyncio.sleep(0)
+        bridge.hold.set()
+        results = await asyncio.gather(first, second)
+
+        assert len(bridge.requests) == 1
+        assert [r["previews"][0]["status"] for r in results] == ["ok", "ok"]
+
+
+class TestRefusedUrls:
+    """A URL the server will not look up costs its own entry, never the batch."""
+
+    async def test_a_url_that_is_not_a_web_url_is_an_error_entry_and_is_not_sent(self):
+        bridge = Bridge()
+
+        result = await bridge.client().fetch_many(
+            [
+                "https://example.com/a",
+                "javascript:alert(1)",
+                "https://example.com/" + "a" * 2100,
+                "https://example.com/b",
+            ]
+        )
+
+        assert [entry["status"] for entry in result["previews"]] == [
+            "ok",
+            "error",
+            "error",
+            "ok",
+        ]
+        assert [entry["url"] for entry in result["previews"]][1] == (
+            "javascript:alert(1)"
+        )
+        assert bridge.asked() == ["https://example.com/a", "https://example.com/b"]
+
+    async def test_only_offered_urls_reach_the_bridge(self):
+        bridge = Bridge()
+        offered = previews.OfferedUrls()
+        offered.add(["https://bookmarked.example/a"])
+
+        result = await bridge.client().fetch_many(
+            [
+                "https://bookmarked.example/a",
+                "http://169.254.169.254/latest/meta-data/",
+                "https://attacker.example/collect?secret=1",
+            ],
+            allowed=offered,
+        )
+
+        assert [entry["status"] for entry in result["previews"]] == [
+            "ok",
+            "error",
+            "error",
+        ]
+        assert bridge.asked() == ["https://bookmarked.example/a"]
+
+    async def test_a_refused_url_is_not_cached_as_a_verdict(self):
+        bridge = Bridge()
+        client = bridge.client()
+        offered = previews.OfferedUrls()
+
+        await client.fetch_many(["https://example.com/a"], allowed=offered)
+        offered.add(["https://example.com/a"])
+        result = await client.fetch_many(["https://example.com/a"], allowed=offered)
+
+        assert result["previews"][0]["status"] == "ok"
+
+    async def test_a_call_with_nothing_to_look_up_answers_at_once(self):
+        bridge = Bridge()
+
+        result = await bridge.client().fetch_many(
+            ["ftp://example.com/"], allowed=previews.OfferedUrls()
+        )
+
+        assert result == {
+            "previews": [
+                {
+                    "url": "ftp://example.com/",
+                    "status": "error",
+                    "title": None,
+                    "description": None,
+                    "site_name": None,
+                    "theme_color": None,
+                    "image": None,
+                    "favicon": None,
+                }
+            ]
+        }
+        assert bridge.requests == []
+
+
+class TestOneLookupCannotFailTheBatch:
+    async def test_json_nested_too_deep_to_parse_is_one_error_entry(self, caplog):
+        nested = "[" * 100_000 + "]" * 100_000
+
+        def respond(request: httpx2.Request) -> httpx2.Response:
+            if request.url.params["url"].endswith("/deep"):
+                return httpx2.Response(200, text=nested)
+            return httpx2.Response(200, json=bridge_payload())
+
+        with caplog.at_level("INFO", logger="pinboard_mcp_server.previews"):
+            result = (
+                await Bridge(respond)
+                .client()
+                .fetch_many(["https://example.com/a", "https://example.com/deep"])
+            )
+
+        assert [entry["status"] for entry in result["previews"]] == ["ok", "error"]
+        assert "deep" not in caplog.text
+        assert TOKEN not in caplog.text
+
+    @pytest.mark.parametrize(
+        "error",
+        [
+            httpx2.InvalidURL("no"),
+            RecursionError("maximum recursion depth exceeded"),
+            RuntimeError("anything at all"),
+            KeyError("x"),
+        ],
+        ids=lambda error: type(error).__name__,
+    )
+    async def test_an_unexpected_exception_is_one_error_entry(self, error, caplog):
+        def respond(request: httpx2.Request) -> httpx2.Response:
+            if request.url.params["url"].endswith("/bad"):
+                raise error
+            return httpx2.Response(200, json=bridge_payload())
+
+        bridge = Bridge(respond)
+        client = bridge.client()
+        with caplog.at_level("INFO", logger="pinboard_mcp_server.previews"):
+            result = await client.fetch_many(
+                ["https://example.com/bad", "https://example.com/good"]
+            )
+
+        assert [entry["status"] for entry in result["previews"]] == ["error", "ok"]
+        # The kind of failure is logged; the bookmark and the token are not.
+        assert type(error).__name__ in caplog.text
+        assert "example.com" not in caplog.text
+        assert TOKEN not in caplog.text
+        # And it is not held against the URL.
+        bridge.respond = lambda request: httpx2.Response(200, json=bridge_payload())
+        again = await client.fetch_many(["https://example.com/bad"])
+        assert again["previews"][0]["status"] == "ok"
+
+
+class TestBridgeFailuresAreNotThePagesFault:
+    """A timeout, a refused connection, a 401 or a 5xx says nothing about the page."""
+
+    @staticmethod
+    def failing(kind: str) -> Any:
+        async def respond(request: httpx2.Request) -> httpx2.Response:
+            if kind == "timeout":
+                await asyncio.sleep(5)
+            if kind == "connect":
+                raise httpx2.ConnectError("connection refused")
+            if kind == "not-json":
+                return httpx2.Response(200, text="<html>bad gateway</html>")
+            return httpx2.Response(int(kind))
+
+        return respond
+
+    @pytest.mark.parametrize(
+        "kind", ["timeout", "connect", "500", "502", "503", "301", "not-json"]
+    )
+    async def test_a_transport_failure_is_not_cached_against_the_url(self, kind):
+        bridge = Bridge(self.failing(kind))
+        client = bridge.client(request_timeout=0.05)
+
+        first = await client.fetch_many(["https://example.com/a"])
+        assert first["previews"][0]["status"] == "error"
+
+        bridge.respond = lambda request: httpx2.Response(200, json=bridge_payload())
+        second = await client.fetch_many(["https://example.com/a"])
+
+        assert second["previews"][0]["status"] == "ok"
+        assert len(bridge.requests) == 2
+
+    async def test_a_run_of_failures_opens_the_breaker_for_thirty_seconds(self, caplog):
+        clock = Clock()
+        bridge = Bridge(self.failing("503"))
+        client = bridge.client(timer=clock)
+
+        with caplog.at_level("WARNING", logger="pinboard_mcp_server.previews"):
+            for n in range(3):
+                await client.fetch_many([f"https://example.com/{n}"])
+        assert len(bridge.requests) == 3
+        assert "not answering" in caplog.text
+
+        # Open: nothing is sent, the answer is immediate, and nothing is cached.
+        bridge.respond = lambda request: httpx2.Response(200, json=bridge_payload())
+        clock.now += 29
+        result = await client.fetch_many(
+            ["https://example.com/0", "https://example.com/new"]
+        )
+        assert [entry["status"] for entry in result["previews"]] == ["error", "error"]
+        assert len(bridge.requests) == 3
+
+        clock.now += 2
+        result = await client.fetch_many(
+            ["https://example.com/0", "https://example.com/new"]
+        )
+        assert [entry["status"] for entry in result["previews"]] == ["ok", "ok"]
+
+    async def test_a_success_between_failures_keeps_the_breaker_shut(self):
+        bridge = Bridge()
+        client = bridge.client()
+        answers = iter([503, 503, 200, 503, 503, 200])
+
+        def respond(request: httpx2.Request) -> httpx2.Response:
+            status = next(answers)
+            return httpx2.Response(status, json=bridge_payload())
+
+        bridge.respond = respond
+        for n in range(6):
+            await client.fetch_many([f"https://example.com/{n}"])
+
+        assert len(bridge.requests) == 6
+
+    async def test_a_400_is_about_the_page_and_does_not_count(self):
+        bridge = Bridge(lambda request: httpx2.Response(400))
+        client = bridge.client()
+
+        for n in range(5):
+            await client.fetch_many([f"https://example.com/{n}"])
+
+        assert len(bridge.requests) == 5
+
+    async def test_a_page_that_failed_for_good_is_about_the_page_too(self):
+        # The bridge reports a page it will never read (not HTML, a 4xx,
+        # blocked) as a finished answer with nothing in it.
+        payload = {
+            "preview": None,
+            "previewStatus": "error",
+            "thumbnails": {"image": None, "favicon": None},
+            "thumbnailsStatus": "complete",
+        }
+        bridge = Bridge(lambda request: httpx2.Response(200, json=payload))
+        client = bridge.client()
+
+        for n in range(5):
+            result = await client.fetch_many([f"https://example.com/{n}"])
+            assert result["previews"][0]["status"] == "error"
+        again = await client.fetch_many(["https://example.com/0"])
+
+        # Every one was sent (no breaker), and the verdict on a page is kept.
+        assert len(bridge.requests) == 5
+        assert again["previews"][0]["status"] == "error"
+
+    async def test_a_slow_answer_inside_the_timeout_is_not_a_failure(self):
+        async def respond(request: httpx2.Request) -> httpx2.Response:
+            await asyncio.sleep(0.05)
+            return httpx2.Response(200, json=bridge_payload())
+
+        bridge = Bridge(respond)
+        client = bridge.client(request_timeout=1.0)
+
+        for n in range(5):
+            result = await client.fetch_many([f"https://example.com/{n}"])
+            assert result["previews"][0]["status"] == "ok"
+
+        assert len(bridge.requests) == 5
+
+    async def test_a_rejected_token_opens_the_breaker_at_once(self):
+        clock = Clock()
+        bridge = Bridge(lambda request: httpx2.Response(401))
+        client = bridge.client(timer=clock)
+
+        await client.fetch_many(["https://example.com/a"])
+        await client.fetch_many(["https://example.com/b"])
+        assert len(bridge.requests) == 1
+
+        clock.now += 31
+        await client.fetch_many(["https://example.com/b"])
+        assert len(bridge.requests) == 2
 
 
 class TestRateLimit:
@@ -782,7 +1233,7 @@ class TestRateLimit:
         bridge.respond = respond
         return bridge
 
-    async def test_a_429_stops_the_rest_of_the_batch(self):
+    async def test_a_429_marks_the_unanswered_urls_rate_limited(self):
         bridge = self.limited_after(2, {"Retry-After": "17"})
         urls = [f"https://example.com/{n}" for n in range(8)]
 
@@ -791,9 +1242,46 @@ class TestRateLimit:
         statuses = [entry["status"] for entry in result["previews"]]
         assert statuses[:2] == ["ok", "ok"]
         assert statuses[2:] == ["rate_limited"] * 6
-        # The four in flight when the 429 landed, and none of the four behind them.
-        assert len(bridge.requests) == 4
         assert result["retry_after_seconds"] == 17
+
+    async def test_nothing_more_is_sent_while_the_limit_is_in_force(self):
+        clock = Clock()
+        bridge = self.limited_after(0, {"Retry-After": "17"})
+        client = bridge.client(timer=clock)
+        await client.fetch_many(["https://example.com/a"])
+        assert len(bridge.requests) == 1
+        bridge.respond = lambda request: httpx2.Response(200, json=bridge_payload())
+
+        clock.now += 10
+        result = await client.fetch_many(
+            ["https://example.com/a", "https://example.com/b"]
+        )
+
+        assert [entry["status"] for entry in result["previews"]] == [
+            "rate_limited",
+            "rate_limited",
+        ]
+        assert len(bridge.requests) == 1
+        # What is left of the wait, not the whole of it again.
+        assert result["retry_after_seconds"] == 7
+
+    async def test_lookups_queued_behind_a_429_are_not_sent(self):
+        # Sixteen URLs across two calls: the second eight are still queued
+        # when the first wave is told to stop, and never go out.
+        bridge = self.limited_after(0, {"Retry-After": "5"})
+        client = bridge.client()
+
+        first, second = await asyncio.gather(
+            client.fetch_many([f"https://example.com/{n}" for n in range(8)]),
+            client.fetch_many([f"https://example.org/{n}" for n in range(8)]),
+        )
+
+        assert len(bridge.requests) == 8
+        assert all(
+            entry["status"] == "rate_limited"
+            for result in (first, second)
+            for entry in result["previews"]
+        )
 
     @pytest.mark.parametrize(
         ("header", "expected"),
@@ -811,13 +1299,16 @@ class TestRateLimit:
             0, {} if header is None else {"Retry-After": header}
         )
 
-        result = await bridge.client().fetch_many(["https://example.com/a"])
+        result = await bridge.client(timer=Clock()).fetch_many(
+            ["https://example.com/a"]
+        )
 
         assert result["retry_after_seconds"] == expected
 
     async def test_a_rate_limited_url_is_not_cached(self):
-        bridge = self.limited_after(1)
-        client = bridge.client()
+        clock = Clock()
+        bridge = self.limited_after(1, {"Retry-After": "5"})
+        client = bridge.client(timer=clock)
 
         first = await client.fetch_many(
             ["https://example.com/a", "https://example.com/b"]
@@ -828,6 +1319,7 @@ class TestRateLimit:
         ]
 
         bridge.respond = lambda request: httpx2.Response(200, json=bridge_payload())
+        clock.now += 5
         second = await client.fetch_many(
             ["https://example.com/a", "https://example.com/b"]
         )
@@ -840,7 +1332,7 @@ class TestRateLimit:
             "https://example.com/b",
         ]
 
-    async def test_cached_urls_are_still_answered_in_a_limited_batch(self):
+    async def test_cached_urls_are_still_answered_while_limited(self):
         bridge = Bridge()
         client = bridge.client()
         await client.fetch_many(["https://example.com/cached"])
@@ -855,15 +1347,17 @@ class TestRateLimit:
             "ok",
         ]
 
-    async def test_the_next_batch_starts_afresh(self):
-        bridge = self.limited_after(0)
-        client = bridge.client()
-        await client.fetch_many(["https://example.com/a"])
-        bridge.respond = lambda request: httpx2.Response(200, json=bridge_payload())
+    async def test_a_429_is_not_a_failure_of_the_bridge(self):
+        clock = Clock()
+        bridge = self.limited_after(0, {"Retry-After": "1"})
+        client = bridge.client(timer=clock)
 
-        result = await client.fetch_many(["https://example.com/a"])
+        for n in range(5):
+            await client.fetch_many([f"https://example.com/{n}"])
+            clock.now += 2
 
-        assert result["previews"][0]["status"] == "ok"
+        # Each was sent once its wait was over: the breaker never opened.
+        assert len(bridge.requests) == 5
 
 
 class TestTokenStaysOutOfTheLogs:
@@ -908,14 +1402,17 @@ class TestTokenStaysOutOfTheLogs:
         assert "secret-bookmark" not in text_of(ours)
 
     async def test_a_rejected_token_is_warned_about_once(self, caplog):
-        client = Bridge(lambda request: httpx2.Response(401)).client()
+        clock = Clock()
+        client = Bridge(lambda request: httpx2.Response(401)).client(timer=clock)
 
         with caplog.at_level("WARNING", logger="pinboard_mcp_server.previews"):
-            await client.fetch_many(["https://example.com/a", "https://example.com/b"])
+            for n in range(3):
+                await client.fetch_many([f"https://example.com/{n}"])
+                clock.now += 60
 
-        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
-        assert len(warnings) == 1
-        assert "401" in warnings[0].getMessage()
+        rejections = [r for r in caplog.records if "401" in r.getMessage()]
+        assert len(rejections) == 1
+        assert rejections[0].levelno == logging.WARNING
 
     def test_the_token_is_not_in_the_client_s_repr(self):
         client = Bridge().client()
@@ -969,40 +1466,42 @@ class FakePreviews:
     def __init__(self):
         self.asked = []
 
-    async def fetch_many(self, urls):
-        self.asked.append(urls)
-        return {"previews": [{"url": url, "status": "no_data"} for url in urls]}
+    async def fetch_many(self, urls, *, allowed=None):
+        offered = [url for url in urls if allowed is None or url in allowed]
+        self.asked.append(offered)
+        return {"previews": [
+            {"url": url, "status": "no_data" if url in offered else "error"}
+            for url in urls
+        ]}
 
 async def call(client, name, arguments):
     result = await client.call_tool_mcp(name, arguments)
     return {
         "is_error": result.is_error,
         "structured": result.structured_content,
-        "text": result.content[0].text if result.content else None,
+        "texts": [block.text for block in result.content],
     }
 
 async def go():
-    bookmark = Bookmark.from_pinboard({
-        "href": "https://example.com/a", "description": "A", "extended": "",
-        "tags": "python", "time": "2024-01-15T10:30:00Z",
-    })
+    bookmarks = [
+        Bookmark.from_pinboard({
+            "href": "https://example.com/" + name, "description": name, "extended": "",
+            "tags": "python", "time": "2024-01-15T10:30:00Z",
+        })
+        for name in ("a", "b")
+    ]
     main.client = Mock()
     for method in ("search_bookmarks", "search_bookmarks_extended",
                    "get_recent_bookmarks", "get_bookmarks_by_tags"):
-        setattr(main.client, method, AsyncMock(return_value=[bookmark]))
+        setattr(main.client, method, AsyncMock(return_value=bookmarks))
     fake = FakePreviews()
     report = {}
+    a, b = "https://example.com/a", "https://example.com/b"
     async with Client(main.mcp) as client:
-        report["unconfigured"] = await call(
-            client, "get_link_previews", {"urls": ["https://example.com/a"]})
+        report["unconfigured"] = await call(client, "get_link_previews", {"urls": [a]})
         main.link_previews = fake
-        report["ok"] = await call(client, "get_link_previews", {"urls": [
-            "https://example.com/a", "https://example.com/b", "https://example.com/a"]})
-        report["bad_scheme"] = await call(
-            client, "get_link_previews", {"urls": ["javascript:alert(1)"]})
-        report["too_many"] = await call(client, "get_link_previews", {
-            "urls": ["https://example.com/%d" % n for n in range(9)]})
-        report["none"] = await call(client, "get_link_previews", {"urls": []})
+        report["before_any_bookmarks"] = await call(
+            client, "get_link_previews", {"urls": [a]})
         report["bookmarks"] = {
             "search_bookmarks": await call(client, "search_bookmarks", {"query": "a"}),
             "search_bookmarks_extended": await call(
@@ -1011,6 +1510,12 @@ async def go():
             "list_bookmarks_by_tags": await call(
                 client, "list_bookmarks_by_tags", {"tags": ["python"]}),
         }
+        report["ok"] = await call(client, "get_link_previews", {"urls": [a, b, a]})
+        report["mixed"] = await call(client, "get_link_previews", {"urls": [
+            a, "javascript:alert(1)", "https://elsewhere.example/secret"]})
+        report["too_many"] = await call(client, "get_link_previews", {
+            "urls": ["https://example.com/%d" % n for n in range(9)]})
+        report["none"] = await call(client, "get_link_previews", {"urls": []})
     report["asked"] = fake.asked
     print(json.dumps(report))
 
@@ -1056,7 +1561,10 @@ class TestToolRegistration:
         report = _run_server_script(LIST_TOOLS, **{previews.BRIDGE_URL_ENV_VAR: BRIDGE})
 
         assert report["enabled"] is True
-        assert report["tools"]["get_link_previews"]["ui"] == {"visibility": ["app"]}
+        meta = report["tools"]["get_link_previews"]
+        assert meta["ui"] == {"visibility": ["app"]}
+        assert meta["openai/widgetAccessible"] is True
+        assert meta["openai/visibility"] == "private"
         # A host without MCP Apps shows the tool to the model regardless, so
         # the description has to wave it off.
         description = report["descriptions"]["get_link_previews"]
@@ -1068,8 +1576,14 @@ class TestToolRegistration:
                 "resourceUri": ui.card_uri(ui.BOOKMARKS_CARD)
             }
 
-    def test_the_app_only_meta_is_what_the_spec_asks_for(self):
-        assert ui.APP_ONLY_TOOL_META == {"ui": {"visibility": ["app"]}}
+    def test_the_app_only_meta_is_what_the_spec_and_chatgpt_ask_for(self):
+        assert ui.APP_ONLY_TOOL_META == {
+            # MCP Apps: callable by the app, hidden from the model.
+            "ui": {"visibility": ["app"]},
+            # ChatGPT's own keys for the same two things.
+            "openai/widgetAccessible": True,
+            "openai/visibility": "private",
+        }
 
 
 class TestToolCalls:
@@ -1079,20 +1593,48 @@ class TestToolCalls:
         return _run_server_script(CALL_TOOLS, **{previews.BRIDGE_URL_ENV_VAR: BRIDGE})
 
     def test_urls_are_deduplicated_and_answered_in_order(self, report):
-        assert report["asked"] == [["https://example.com/a", "https://example.com/b"]]
+        assert report["asked"][1] == ["https://example.com/a", "https://example.com/b"]
         assert report["ok"]["is_error"] is False
         assert [p["url"] for p in report["ok"]["structured"]["previews"]] == [
             "https://example.com/a",
             "https://example.com/b",
         ]
 
-    @pytest.mark.parametrize("case", ["bad_scheme", "too_many", "none"])
+    def test_only_urls_a_bookmark_tool_returned_reach_the_bridge(self, report):
+        # Asked before any bookmark tool ran, the same URL is refused.
+        assert report["asked"][0] == []
+        before = report["before_any_bookmarks"]
+        assert before["is_error"] is False
+        assert [p["status"] for p in before["structured"]["previews"]] == ["error"]
+
+    def test_a_url_the_tool_will_not_look_up_costs_only_its_own_row(self, report):
+        mixed = report["mixed"]
+
+        assert mixed["is_error"] is False
+        assert [p["status"] for p in mixed["structured"]["previews"]] == [
+            "no_data",
+            "error",
+            "error",
+        ]
+        assert report["asked"][2] == ["https://example.com/a"]
+
+    def test_the_text_block_is_one_line_and_not_the_payload_again(self, report):
+        for case in ("ok", "mixed"):
+            texts = report[case]["texts"]
+            assert len(texts) == 1
+            assert "\n" not in texts[0]
+            assert len(texts[0]) < 100
+            assert "previews" not in texts[0].lower().replace("link previews", "")
+            assert "example.com" not in texts[0]
+
+    @pytest.mark.parametrize("case", ["too_many", "none"])
     def test_a_bad_request_is_refused_before_the_bridge_is_asked(self, report, case):
         assert report[case]["is_error"] is True
+        assert len(report["asked"]) == 3
 
     def test_a_server_started_without_its_bridge_client_says_so(self, report):
         assert report["unconfigured"]["is_error"] is True
-        assert "not configured" in report["unconfigured"]["text"]
+        assert "not configured" in report["unconfigured"]["texts"][0]
 
     def test_bookmark_tools_tell_the_card_previews_are_available(self, report):
         for name in BOOKMARK_TOOLS:

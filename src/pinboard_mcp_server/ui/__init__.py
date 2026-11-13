@@ -140,8 +140,18 @@ def tool_meta(
 #: keeps it out of the model's tool list and lets only the app call it
 #: (``app.callServerTool``). A host without MCP Apps support ignores this and
 #: lists the tool like any other, so such a tool's description has to say what
-#: it is.
-APP_ONLY_TOOL_META: dict[str, Any] = {"ui": {"visibility": ["app"]}}
+#: it is, and the tool has to be safe for a model to call.
+#:
+#: ``ui.visibility`` is the MCP Apps standard. The two ``openai/`` keys are
+#: ChatGPT's own, from before it: ``widgetAccessible`` is what lets a widget
+#: reach the tool through ``window.openai.callTool``, and ``visibility:
+#: private`` hides it from the model there. OpenAI's reference calls both
+#: compatibility fields beside ``ui.visibility``, and they cost nothing.
+APP_ONLY_TOOL_META: dict[str, Any] = {
+    "ui": {"visibility": ["app"]},
+    "openai/widgetAccessible": True,
+    "openai/visibility": "private",
+}
 
 #: Where hosts serve the fonts they hand a card in ``styles.css.fonts``: the
 #: card injects that CSS (``applyHostFonts``), and without the origins in its

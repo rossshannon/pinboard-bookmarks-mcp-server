@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import Any
 
 from fastmcp import FastMCP  # type: ignore
+from fastmcp.tools import ToolResult  # type: ignore
 
 from pinboard_mcp_server import previews, ui
 from pinboard_mcp_server.client import PinboardClient
@@ -36,6 +37,11 @@ client: PinboardClient
 # The preview bridge's client - initialized in main() when previews are on
 link_previews: previews.LinkPreviews | None = None
 
+# Every bookmark URL the tools below have recently returned. get_link_previews
+# looks up nothing else, so it cannot be used to make the bridge fetch an
+# arbitrary URL with the user's token (see previews.OfferedUrls).
+offered_urls = previews.OfferedUrls()
+
 
 def _bookmarks_result(result: dict[str, Any]) -> dict[str, Any]:
     """A bookmark tool's result, telling the card when it may ask for previews.
@@ -45,6 +51,7 @@ def _bookmarks_result(result: dict[str, Any]) -> dict[str, Any]:
     """
     if PREVIEWS_ENABLED:
         result["previews_available"] = True
+        offered_urls.add(bookmark.get("url") for bookmark in result["bookmarks"])
     return result
 
 
@@ -194,13 +201,14 @@ async def list_tags() -> list[dict[str, Any]]:
 if PREVIEWS_ENABLED:
 
     @mcp.tool(meta=ui.APP_ONLY_TOOL_META)
-    async def get_link_previews(urls: list[str]) -> dict[str, Any]:
+    async def get_link_previews(urls: list[str]) -> ToolResult:
         """Internal helper for the Pinboard bookmarks result card; not useful to call directly.
 
         The card calls this itself, after it has rendered, to decorate the
         bookmarks it shows with a favicon, site name, description and
         thumbnail. It returns inline image data that is meaningless as text
-        and says nothing about a bookmark that the bookmark tools do not.
+        and says nothing about a bookmark that the bookmark tools do not. It
+        only answers for URLs a bookmark tool has just returned.
 
         Args:
             urls: The http(s) URLs to preview (1-8)
@@ -209,7 +217,16 @@ if PREVIEWS_ENABLED:
         if link_previews is None:
             raise RuntimeError("Link previews are not configured")
 
-        return await link_previews.fetch_many(unique)
+        result = await link_previews.fetch_many(unique, allowed=offered_urls)
+
+        # A ToolResult, not a dict: FastMCP would serialise a dict a second
+        # time as the text block, and every image would cross the wire twice.
+        # The card reads structuredContent; the text is for anything else.
+        found = sum(entry["status"] == "ok" for entry in result["previews"])
+        return ToolResult(
+            content=f"Link previews for the bookmarks card: {found} of {len(unique)} found.",
+            structured_content=result,
+        )
 
 
 def main() -> None:

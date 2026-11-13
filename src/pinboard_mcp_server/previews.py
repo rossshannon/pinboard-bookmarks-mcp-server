@@ -26,15 +26,16 @@ import base64
 import binascii
 import json
 import logging
+import math
 import os
 import re
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Container, Iterable, Mapping
 from typing import Any
 from urllib.parse import urlsplit
 
 import httpx2
-from cachetools import TLRUCache
+from cachetools import LRUCache, TLRUCache
 
 logger = logging.getLogger(__name__)
 
@@ -49,17 +50,39 @@ MAX_URLS_PER_CALL = 8
 #: A URL longer than this is not one a browser would open either.
 MAX_URL_LENGTH = 2048
 
-#: Seconds one page's lookup may take, connection to last byte.
-REQUEST_TIMEOUT_SECONDS = 10.0
+#: Seconds one page's lookup may take, connection to last byte, counted from
+#: the moment it is sent. Time spent queued behind other lookups is not
+#: charged to it. The bridge answers a thumbnail request inside a deadline of
+#: its own, seven seconds, so this is that and a margin for the network: an
+#: answer the bridge was always going to give is never counted as a failure
+#: of the bridge.
+REQUEST_TIMEOUT_SECONDS = 8.5
 
-#: Seconds a whole batch may take. The card gives a tool call about fifteen
-#: seconds before it stops waiting, so a batch answers inside that with
-#: whatever it has, and the lookups still running count as errors.
+#: Seconds a ``get_link_previews`` call waits before answering with what it
+#: has. The card gives a tool call about fifteen seconds before it stops
+#: waiting, so the answer has to leave before then. A lookup not finished by
+#: then is not cut off: it carries on into the cache, and its entry goes back
+#: ``pending`` so the card asks once more.
 BATCH_TIMEOUT_SECONDS = 12.0
 
-#: Lookups in flight at once, across every batch. The bridge allows sixty a
-#: minute per address, and scraping is slow work for it.
-MAX_CONCURRENCY = 4
+#: Lookups in flight at once, across every call: a whole call's worth, so the
+#: eight URLs of one call go out together, in one wave, and each has its full
+#: time inside the call's twelve seconds. It is also the number of jobs the
+#: bridge runs at once for one client, so there are never more in flight
+#: than it will take. Only a second card asking at the same moment queues.
+MAX_CONCURRENCY = 8
+
+#: How many transport failures in a row (the bridge unreachable, timing out,
+#: answering 5xx) open the circuit breaker, and for how long. Open, lookups
+#: fail at once without touching the bridge. A failure of this kind says
+#: nothing about the page, so it is never cached against the page's URL; the
+#: breaker is what keeps a dead bridge from being hammered.
+BREAKER_FAILURES = 3
+BREAKER_OPEN_SECONDS = 30.0
+
+#: How many bookmark URLs the server remembers having returned; see
+#: ``OfferedUrls``.
+OFFERED_URLS = 5000
 
 #: A bridge response larger than this is refused unread. Two thumbnails and a
 #: few strings come to well under a tenth of it.
@@ -89,6 +112,9 @@ STATUS_OK = "ok"
 STATUS_NO_DATA = "no_data"
 STATUS_ERROR = "error"
 STATUS_RATE_LIMITED = "rate_limited"
+#: The lookup was still running when the call had to answer. It carries on,
+#: and asking again shortly will find its result.
+STATUS_PENDING = "pending"
 
 #: The bridge's ``thumbnailsStatus``: whether the thumbnails in a response are
 #: all there are going to be. An older bridge sends none, which means they are.
@@ -96,6 +122,12 @@ THUMBNAILS_COMPLETE = "complete"
 #: The bridge was too busy to make the thumbnails this time, and expects to
 #: have them in a few seconds.
 THUMBNAILS_BUSY = "busy"
+#: The other values, "transient" (a timeout, a network failure or a 5xx,
+#: fetching the page or its images, that may not happen again) and
+#: "unavailable", are handled alike: what arrived is served and kept only for
+#: the short lifetime. A page that failed for good (not HTML, a 4xx, blocked)
+#: comes back "complete" with nothing in it, and is an ordinary ``no_data`` or
+#: ``error`` entry.
 
 #: Raster formats only: an SVG is a document, and can carry script.
 _DATA_URI = re.compile(r"^data:image/(webp|png|jpeg);base64,([A-Za-z0-9+/=]+)$")
@@ -143,31 +175,70 @@ def bridge_url(environ: Mapping[str, str] | None = None) -> str | None:
 
 
 def requested_urls(urls: Any) -> list[str]:
-    """Validate a ``get_link_previews`` request and return its URLs, deduplicated, in order.
+    """Check a ``get_link_previews`` request's shape and return its URLs, deduplicated, in order.
 
-    Raises ``ValueError`` for anything but one to eight absolute ``http(s)``
-    URLs: the bridge is asked to fetch whatever it is given, so nothing else
-    is passed on.
+    Raises ``ValueError`` only for a request that is the wrong shape: not a
+    list of one to eight strings. Whether each string is a URL worth looking
+    up is decided per URL (``is_web_url``, ``OfferedUrls``), so one bad URL
+    costs its own row a preview and not the other seven theirs.
     """
     if not isinstance(urls, list) or not 1 <= len(urls) <= MAX_URLS_PER_CALL:
         raise ValueError(f"Must provide 1-{MAX_URLS_PER_CALL} URLs")
     unique: list[str] = []
     for url in urls:
-        if not isinstance(url, str) or not _is_web_url(url):
-            raise ValueError("Every URL must be an absolute http(s) URL")
+        if not isinstance(url, str):
+            raise ValueError("Every URL must be a string")
         if url not in unique:
             unique.append(url)
     return unique
 
 
-def _is_web_url(url: str) -> bool:
+def is_web_url(url: str) -> bool:
+    """Whether a URL is one the bridge may be asked about: absolute ``http(s)``, with a host, of a sane length.
+
+    The card applies the same rule before it asks (``preview-loader.ts``).
+    """
     if len(url) > MAX_URL_LENGTH or url != url.strip():
+        return False
+    if any(character.isspace() for character in url):
         return False
     try:
         parts = urlsplit(url)
     except ValueError:
         return False
     return parts.scheme in {"http", "https"} and bool(parts.hostname)
+
+
+class OfferedUrls:
+    """The bookmark URLs this server has recently returned: the only ones it will look up.
+
+    ``get_link_previews`` is marked for the card alone, but a host that
+    ignores that shows it to the model, and a model can be talked into calling
+    a tool with anything. Without this, the tool would make the bridge fetch
+    any URL at all, with the user's token attached to the request for it. So
+    the bookmark tools record each URL they return, and a preview is only ever
+    fetched for one of those: the card asks about nothing else, and nothing
+    else gets further than an ``error`` entry.
+
+    Bounded, least recently used out first, and in memory: a card still open
+    after a server restart gets no previews for rows it has not been sent
+    again, which costs it nothing but the previews.
+    """
+
+    def __init__(self, maxsize: int = OFFERED_URLS) -> None:
+        self._urls: LRUCache = LRUCache(maxsize=maxsize)
+
+    def add(self, urls: Iterable[Any]) -> None:
+        for url in urls:
+            if isinstance(url, str):
+                self._urls[url] = True
+
+    def __contains__(self, url: object) -> bool:
+        # `get`, not `in`: being asked about counts as use.
+        return self._urls.get(url) is True
+
+    def __len__(self) -> int:
+        return len(self._urls)
 
 
 def _clean_text(value: Any, limit: int) -> str | None:
@@ -304,13 +375,6 @@ def _retry_after(response: httpx2.Response) -> int:
     return max(1, min(seconds, MAX_RETRY_AFTER_SECONDS))
 
 
-class _Batch:
-    """What the lookups of one ``fetch_many`` call share: whether the bridge has said to stop."""
-
-    def __init__(self) -> None:
-        self.retry_after: int | None = None
-
-
 class LinkPreviews:
     """An async client for a pinboard-bridge instance's ``/preview``, with a cache in front.
 
@@ -330,6 +394,7 @@ class LinkPreviews:
         self._endpoint = f"{base_url.rstrip('/')}/preview"
         self._request_timeout = request_timeout
         self._batch_timeout = batch_timeout
+        self._timer = timer
         self._http = httpx2.AsyncClient(
             # The token goes to the bridge and nowhere else: a redirect is not
             # followed, to this host or any other.
@@ -338,96 +403,171 @@ class LinkPreviews:
             timeout=httpx2.Timeout(request_timeout),
             transport=transport,
         )
-        # One cache, two lifetimes: a finished preview keeps for hours, and
-        # anything less (a failure, a page whose thumbnails have yet to be
-        # made) is worth asking about again in a few minutes. Each value is
-        # the entry and the lifetime it was stored with.
+        # One cache, two lifetimes: a finished preview keeps for hours, and a
+        # page-level answer short of that (no metadata, a page the bridge
+        # could not read, thumbnails yet to be made) is worth asking about
+        # again in a few minutes. Each value is the entry and the lifetime it
+        # was stored with. Failures of the bridge itself are never in here.
         self._cache: TLRUCache = TLRUCache(
             maxsize=CACHE_ENTRIES,
             ttu=lambda _url, cached, now: now + cached[1],
             timer=timer,
         )
         self._semaphore: asyncio.Semaphore | None = None
+        # Lookups under way, by URL: a second call asking about the same page
+        # joins the first's lookup rather than starting another.
+        self._in_flight: dict[str, asyncio.Task[dict[str, Any]]] = {}
+        # Until when the bridge's rate limit is taken to be in force.
+        self._limited_until = 0.0
+        self._transport_failures = 0
+        self._breaker_open_until = 0.0
         self._warned_unauthorised = False
 
     async def aclose(self) -> None:
+        for task in list(self._in_flight.values()):
+            task.cancel()
         await self._http.aclose()
 
-    async def fetch_many(self, urls: list[str]) -> dict[str, Any]:
+    async def fetch_many(
+        self, urls: list[str], *, allowed: Container[str] | None = None
+    ) -> dict[str, Any]:
         """Look up every URL and return the ``get_link_previews`` result, entries in request order.
 
-        Once the bridge answers 429, no further lookup in this batch is sent:
-        the ones not yet started come back ``rate_limited``, and the result
-        carries ``retry_after_seconds`` so the card knows how long to leave it.
+        A URL that is not a web URL, or not in ``allowed`` when that is given,
+        gets an ``error`` entry and the bridge never hears of it. Nothing one
+        URL does fails the others: every lookup ends as an entry.
+
+        The call answers within the batch timeout. A lookup still running then
+        is left to finish into the cache, and its entry is ``pending``. When
+        the bridge's rate limit is in force the entries not looked up are
+        ``rate_limited`` and the result carries ``retry_after_seconds``.
         """
-        batch = _Batch()
-        tasks = [asyncio.ensure_future(self._lookup(url, batch)) for url in urls]
-        _, unfinished = await asyncio.wait(tasks, timeout=self._batch_timeout)
-        for task in unfinished:
-            task.cancel()
-        if unfinished:
-            await asyncio.gather(*unfinished, return_exceptions=True)
-            logger.info(
-                "Link previews: %d of %d lookups ran out of time",
-                len(unfinished),
-                len(tasks),
+        lookups: dict[str, asyncio.Task[dict[str, Any]]] = {}
+        refused: set[str] = set()
+        for url in urls:
+            if not is_web_url(url) or (allowed is not None and url not in allowed):
+                refused.add(url)
+            elif url not in lookups:
+                lookups[url] = self._lookup_task(url)
+        if refused:
+            logger.info("Link previews: refused %d of %d URLs", len(refused), len(urls))
+        unfinished: set[asyncio.Task[dict[str, Any]]] = set()
+        if lookups:
+            _, unfinished = await asyncio.wait(
+                lookups.values(), timeout=self._batch_timeout
             )
-        previews = [
-            dict(task.result())
-            if task not in unfinished and not task.cancelled()
-            else _entry(url, STATUS_ERROR)
-            for url, task in zip(urls, tasks, strict=True)
-        ]
+        if unfinished:
+            logger.info(
+                "Link previews: %d of %d lookups still running at the deadline",
+                len(unfinished),
+                len(lookups),
+            )
+
+        previews: list[dict[str, Any]] = []
+        for url in urls:
+            task = lookups.get(url)
+            if task is None:
+                previews.append(_entry(url, STATUS_ERROR))
+            elif task in unfinished:
+                previews.append(_entry(url, STATUS_PENDING))
+            else:
+                # A copy: the cache holds the original.
+                previews.append(dict(task.result()))
         result: dict[str, Any] = {"previews": previews}
         if any(entry["status"] == STATUS_RATE_LIMITED for entry in previews):
-            result["retry_after_seconds"] = (
-                batch.retry_after or DEFAULT_RETRY_AFTER_SECONDS
+            remaining = math.ceil(self._limited_until - self._timer())
+            result["retry_after_seconds"] = max(
+                1, min(remaining, MAX_RETRY_AFTER_SECONDS)
             )
         return result
 
-    async def _lookup(self, url: str, batch: _Batch) -> dict[str, Any]:
-        cached = self._cache.get(url)
-        if cached is not None:
-            return cached[0]
-        # Made on first use, so it belongs to the loop the server runs in.
-        if self._semaphore is None:
-            self._semaphore = asyncio.Semaphore(MAX_CONCURRENCY)
-        async with self._semaphore:
-            if batch.retry_after is not None:
-                return _entry(url, STATUS_RATE_LIMITED)
-            # Another batch may have filled it while this one queued.
+    def _lookup_task(self, url: str) -> asyncio.Task[dict[str, Any]]:
+        task = self._in_flight.get(url)
+        if task is None:
+            task = asyncio.ensure_future(self._lookup(url))
+            self._in_flight[url] = task
+            task.add_done_callback(lambda _done: self._in_flight.pop(url, None))
+        return task
+
+    async def _lookup(self, url: str) -> dict[str, Any]:
+        """One URL's entry, from the cache or the bridge. Never raises."""
+        try:
             cached = self._cache.get(url)
             if cached is not None:
                 return cached[0]
-            entry, lifetime = await self._request(url, batch)
-        if lifetime is not None:
-            self._cache[url] = (entry, lifetime)
-        return entry
+            # Made on first use, so it belongs to the loop the server runs in.
+            if self._semaphore is None:
+                self._semaphore = asyncio.Semaphore(MAX_CONCURRENCY)
+            async with self._semaphore:
+                now = self._timer()
+                if now < self._limited_until:
+                    return _entry(url, STATUS_RATE_LIMITED)
+                if now < self._breaker_open_until:
+                    return _entry(url, STATUS_ERROR)
+                entry, lifetime = await self._request(url)
+            if lifetime is not None:
+                self._cache[url] = (entry, lifetime)
+            return entry
+        except Exception as error:  # noqa: BLE001 - one lookup must not fail its batch
+            # Whatever it was (a response nested too deep to parse, a URL the
+            # HTTP client will not send), it is this URL's problem alone. The
+            # kind of failure only: the message can quote the request.
+            logger.warning("Link preview lookup failed: %s", type(error).__name__)
+            return _entry(url, STATUS_ERROR)
 
-    async def _request(
-        self, url: str, batch: _Batch
-    ) -> tuple[dict[str, Any], float | None]:
-        """One lookup: the entry, and how long to keep it (``None`` for not at all)."""
+    def _transport_failed(self) -> None:
+        """Count a failure of the bridge itself, and open the breaker on a run of them."""
+        self._transport_failures += 1
+        if self._transport_failures >= BREAKER_FAILURES:
+            self._open_breaker()
+
+    def _open_breaker(self) -> None:
+        self._transport_failures = 0
+        self._breaker_open_until = self._timer() + BREAKER_OPEN_SECONDS
+        logger.warning(
+            "The preview bridge is not answering; leaving it alone for %d seconds",
+            BREAKER_OPEN_SECONDS,
+        )
+
+    async def _request(self, url: str) -> tuple[dict[str, Any], float | None]:
+        """One lookup: the entry, and how long to keep it (``None`` for not at all).
+
+        Only an answer about the page is kept. A timeout, a refused
+        connection, a 401 or a 5xx is the bridge's trouble, not the page's,
+        and the next ask may well go through.
+        """
         try:
             status, body, retry_after = await asyncio.wait_for(
                 self._get(url), timeout=self._request_timeout
             )
-        except (asyncio.TimeoutError, httpx2.HTTPError, ValueError) as error:
+        except (asyncio.TimeoutError, httpx2.HTTPError, _BadResponse) as error:
             # The kind of failure only. The message can quote the request, and
             # the request is somebody's bookmark.
             logger.info("Link preview lookup failed: %s", type(error).__name__)
-            return _entry(url, STATUS_ERROR), NEGATIVE_TTL_SECONDS
+            self._transport_failed()
+            return _entry(url, STATUS_ERROR), None
         if status == 429:
-            batch.retry_after = retry_after
+            self._limited_until = self._timer() + retry_after
             return _entry(url, STATUS_RATE_LIMITED), None
-        if status == 401 and not self._warned_unauthorised:
-            self._warned_unauthorised = True
-            logger.warning(
-                "The preview bridge rejected the Pinboard token (401); link previews will not load"
-            )
+        if status == 400:
+            # The bridge's answer for a page it cannot reach or will not
+            # fetch: a verdict on the URL, and the bridge is plainly alive.
+            self._transport_failures = 0
+            return _entry(url, STATUS_ERROR), NEGATIVE_TTL_SECONDS
         if status != 200:
             logger.info("Link preview lookup failed: HTTP %d", status)
-            return _entry(url, STATUS_ERROR), NEGATIVE_TTL_SECONDS
+            if status == 401:
+                if not self._warned_unauthorised:
+                    self._warned_unauthorised = True
+                    logger.warning(
+                        "The preview bridge rejected the Pinboard token (401); link previews will not load"
+                    )
+                # No retry will change the token.
+                self._open_breaker()
+            else:
+                self._transport_failed()
+            return _entry(url, STATUS_ERROR), None
+        self._transport_failures = 0
         entry = sanitise_preview(url, body)
         if entry.get("retry"):
             # The card is about to ask again, and an answer from the cache
@@ -448,13 +588,19 @@ class LinkPreviews:
                 return response.status_code, None, _retry_after(response)
             declared = response.headers.get("Content-Length", "")
             if declared.isdigit() and int(declared) > MAX_RESPONSE_BYTES:
-                raise ValueError("preview response too large")
+                raise _BadResponse("preview response too large")
             chunks: list[bytes] = []
             size = 0
             async for chunk in response.aiter_bytes():
                 size += len(chunk)
                 if size > MAX_RESPONSE_BYTES:
-                    raise ValueError("preview response too large")
+                    raise _BadResponse("preview response too large")
                 chunks.append(chunk)
-        # A body that is not JSON raises a ValueError, handled with the rest.
-        return 200, json.loads(b"".join(chunks)), 0
+        try:
+            return 200, json.loads(b"".join(chunks)), 0
+        except ValueError as error:
+            raise _BadResponse("preview response is not JSON") from error
+
+
+class _BadResponse(Exception):
+    """A 200 from the bridge that cannot be used: too large, or not JSON."""
