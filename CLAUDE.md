@@ -51,6 +51,15 @@ Tools link to `ui://pinboard/<card>@<hash>` cards (see docs/mcp-apps-ui.md). The
 - New tools get `meta=ui.tool_meta(<card>)` on their `@mcp.tool` decorator
 - Check a visual change with `npm run capture` (screenshots in `cards/tmp/captures/`) and `npm run test:browser`
 
+## X backfill (`src/pinboard_x_backfill/`)
+
+A separate package and console script (`pinboard-x-backfill`, see docs/x-backfill.md) that saves X likes and bookmarks into Pinboard. It is the only code here that writes to Pinboard; the MCP server stays read-only.
+
+- Writes happen only under `sync --write`, always with `replace=no` (except the opt-in `--tag-existing`). Keep it that way
+- Pinboard takes the token in the query string: never put a request URL or an httpx exception message into an error or log line (`pinboard_api.py` reports the exception class only)
+- Its `posts/all` use is deliberate and paginated (`start`/`results`); the "never unfiltered" rule below is about the MCP server's tools
+- Tests are in `tests/x_backfill/` against in-memory fakes of both services; never point them at a real account
+
 ## Virtual Environment
 
 The project uses a Python virtual environment at `~/.venvs/pinboard-bookmarks-mcp-server/`. Always activate before running tests or development commands:

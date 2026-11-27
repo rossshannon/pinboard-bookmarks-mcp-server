@@ -1,0 +1,30 @@
+{
+ "data": [
+  {
+   "id": "2124574927221686272",
+   "author_id": "12",
+   "created_at": "2026-11-22T18:45:10.000Z",
+   "text": "SQLite FTS5 is absurdly good &amp; fast https://t.co/abc123",
+   "entities": {
+    "urls": [
+     {
+      "url": "https://t.co/abc123",
+      "expanded_url": "https://sqlite.org/fts5.html"
+     }
+    ]
+   }
+  }
+ ],
+ "includes": {
+  "users": [
+   {
+    "id": "12",
+    "username": "simonw",
+    "name": "Simon Willison"
+   }
+  ]
+ },
+ "meta": {
+  "result_count": 1
+ }
+}

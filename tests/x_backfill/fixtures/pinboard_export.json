@@ -1,0 +1,35 @@
+[
+ {
+  "href": "https://twitter.com/simonw/status/1900456864773046272?s=20&t=abcDEF",
+  "description": "Simon Willison on Twitter",
+  "extended": "My own note: read this before the 1.0 upgrade",
+  "meta": "m1",
+  "hash": "h1",
+  "time": "2025-03-14T09:12:44Z",
+  "shared": "yes",
+  "toread": "no",
+  "tags": "datasette sqlite"
+ },
+ {
+  "href": "https://example.com/not-a-tweet",
+  "description": "Something else",
+  "extended": "",
+  "meta": "m2",
+  "hash": "h2",
+  "time": "2024-01-01T00:00:00Z",
+  "shared": "no",
+  "toread": "yes",
+  "tags": "misc"
+ },
+ {
+  "href": "https://x.com/rauchg",
+  "description": "A profile, not a tweet",
+  "extended": "",
+  "meta": "m3",
+  "hash": "h3",
+  "time": "2024-02-01T00:00:00Z",
+  "shared": "no",
+  "toread": "no",
+  "tags": ""
+ }
+]
