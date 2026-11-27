@@ -1,0 +1,36 @@
+{
+ "data": [
+  {
+   "id": "2105953433809846272",
+   "author_id": "13",
+   "created_at": "2026-10-02T09:30:00.000Z",
+   "text": "A very long post that X truncates in the text field… https://t.co/more",
+   "note_tweet": {
+    "text": "A very long post that X truncates in the text field, but whose whole body arrives in the note. Lorem ipsum dolor sit amet. Lorem ipsum dolor sit amet. Lorem ipsum dolor sit amet. Lorem ipsum dolor sit amet. Lorem ipsum dolor sit amet. Lorem ipsum dolor sit amet. Lorem ipsum dolor sit amet. Lorem ipsum dolor sit amet. Lorem ipsum dolor sit amet. Lorem ipsum dolor sit amet. Lorem ipsum dolor sit amet. Lorem ipsum dolor sit amet. Lorem ipsum dolor sit amet. Lorem ipsum dolor sit amet. Lorem ipsum dolor sit amet. Lorem ipsum dolor sit amet. Lorem ipsum dolor sit amet. Lorem ipsum dolor sit amet. Lorem ipsum dolor sit amet. Lorem ipsum dolor sit amet."
+   }
+  },
+  {
+   "id": "1900456864773046272",
+   "author_id": "12",
+   "created_at": "2025-03-14T08:00:00.000Z",
+   "text": "Datasette 1.0 is out"
+  }
+ ],
+ "includes": {
+  "users": [
+   {
+    "id": "12",
+    "username": "simonw",
+    "name": "Simon Willison"
+   },
+   {
+    "id": "13",
+    "username": "rauchg",
+    "name": "Guillermo Rauch"
+   }
+  ]
+ },
+ "meta": {
+  "result_count": 2
+ }
+}

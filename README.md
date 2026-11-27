@@ -154,6 +154,14 @@ The server automatically enforces a 3-second delay between Pinboard API calls to
 - **Cache invalidation**: Uses `posts/update` endpoint to detect changes
 - **Tag cache**: Tag list cached until manually refreshed
 
+## Backfilling X likes and bookmarks
+
+A separate command in this repository, `pinboard-x-backfill`, copies your X
+(Twitter) likes and bookmarks into Pinboard, from the X API or from an X data
+archive. It is idempotent, a dry run unless you pass `--write`, and does not
+touch the MCP server, which stays read-only. See
+[docs/x-backfill.md](docs/x-backfill.md).
+
 ## Testing
 
 The project includes comprehensive test coverage with multiple test strategies:
