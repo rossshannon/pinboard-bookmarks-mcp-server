@@ -14,10 +14,10 @@ from pinboard_x_backfill.sync import (
     ADD,
     RETAG,
     SKIP,
+    Mirror,
     build_plan,
     execute_plan,
     index_by_tweet_id,
-    load_existing,
     load_export,
 )
 from pinboard_x_backfill.tweets import BOOKMARK, LIKE, Tweet
@@ -75,7 +75,9 @@ def test_backs_off_on_429_and_5xx_then_succeeds(fake_pinboard):
     fake_pinboard.fail_next = [429, 500, 429]
     assert api.last_update() == "2026-11-26T00:00:00Z"
     assert waits == [6.0, 12.0, 24.0]
-    assert log and all(TOKEN not in line and "ABC123" not in line for line in log)
+    assert len(log) == 3 and all(
+        TOKEN not in line and "ABC123" not in line for line in log
+    )
 
 
 def test_gives_up_eventually_without_leaking_the_token(fake_pinboard):
@@ -85,7 +87,14 @@ def test_gives_up_eventually_without_leaking_the_token(fake_pinboard):
     with pytest.raises(PinboardError) as caught:
         api.last_update()
     assert str(caught.value) == "Pinboard posts/update failed: HTTP 429"
-    assert max(waits) == 320.0
+    # Seven waits for eight tries: none after the last.
+    assert waits == [6.0, 12.0, 24.0, 48.0, 96.0, 192.0, 320.0]
+
+    # posts/all has a five-minute limit, so its waits start longer.
+    waits.clear()
+    fake_pinboard.fail_next = [429, 429]
+    assert len(list(api.all_posts())) == 3
+    assert waits == [60.0, 120.0]
 
     fake_pinboard.fail_next = [404]
     with pytest.raises(PinboardError, match="HTTP 404"):
@@ -129,6 +138,15 @@ def test_all_posts_rejects_a_non_list():
         list(api.all_posts())
     with pytest.raises(PinboardError, match="no result code"):
         api.add({"url": "u", "description": "d"}, False)
+    with pytest.raises(PinboardError, match="no list of posts"):
+        api.get("u")
+
+
+def test_a_request_too_long_for_a_url_is_a_clean_error(fake_pinboard):
+    api = pinboard(fake_pinboard)
+    with pytest.raises(PinboardError, match="too long to send"):
+        api.add({"url": "u", "description": "d", "extended": "x" * 70000}, True)
+    assert fake_pinboard.calls == []
 
 
 # -- Planning ------------------------------------------------------------------
@@ -222,30 +240,71 @@ def test_load_export_refuses_other_files(tmp_path):
         load_export(bad)
 
 
-def test_existing_list_is_cached_until_pinboard_changes(fake_pinboard, tmp_path, ids):
+def test_mirror_downloads_once_then_asks_only_for_recent_changes(
+    fake_pinboard, tmp_path, ids
+):
     api = pinboard(fake_pinboard)
-    cache = tmp_path / "pinboard-tweets.json"
+    path = tmp_path / "pinboard-tweets.json"
     log: list[str] = []
-    posts = load_existing(api, cache, log.append)
-    assert [p["href"] for p in posts] == [
+    mirror = Mirror(path)
+    mirror.refresh(api, log=log.append)
+    assert list(mirror.posts) == [
         f"https://twitter.com/simonw/status/{ids['ifttt']}?s=20&t=abcDEF"
     ]
-    assert "3 bookmarks, 1 of them tweets" in log[-1]
+    assert "Read 3 bookmarks; the local copy holds 1 tweets" in log[-1]
+
+    # Nothing changed: one posts/update call and no download.
     before = len(fake_pinboard.calls)
-    assert load_existing(api, cache, log.append) == posts
+    Mirror(path).refresh(api, log=log.append)
     assert [m for m, _ in fake_pinboard.calls[before:]] == ["posts/update"]
 
-    fake_pinboard.posts.insert(0, {"href": "https://x.com/a/status/55"})
+    # Something changed: only bookmarks dated since the day before are asked
+    # for, and they are merged into what is already held.
+    fake_pinboard.posts.insert(
+        0, {"href": "https://x.com/a/status/55", "time": "2026-11-27T00:00:00Z"}
+    )
     fake_pinboard._touch()
-    assert len(load_existing(api, cache, log.append)) == 2
+    again = Mirror(path)
+    again.refresh(api, log=log.append)
+    assert fake_pinboard.calls[-1] == (
+        "posts/all",
+        {"start": "0", "results": "5000", "fromdt": "2026-11-25T00:00:00Z"},
+    )
+    assert len(again.posts) == 2
+    assert Mirror(path).update_time == fake_pinboard.update_time
+
+    # A full refresh forgets the copy, including bookmarks since deleted.
+    fake_pinboard.posts.pop(0)
+    fake_pinboard._touch()
+    again.refresh(api, full=True, log=log.append)
+    assert len(again.posts) == 1 and "fromdt" not in fake_pinboard.calls[-1][1]
 
 
-def test_execute_counts_and_stops_after_a_run_of_failures(fake_pinboard, ids):
+def test_mirror_survives_a_damaged_file_and_odd_times(fake_pinboard, tmp_path):
+    path = tmp_path / "pinboard-tweets.json"
+    path.write_text("{ truncated")
+    mirror = Mirror(path)
+    assert mirror.posts == {} and mirror.update_time == ""
+    mirror.update_time = "not a time"
+    mirror.refresh(pinboard(fake_pinboard), log=lambda _: None)
+    assert len(mirror.posts) == 1  # fell back to a whole download
+
+
+def test_execute_counts_and_stops_after_a_run_of_failures(fake_pinboard, tmp_path, ids):
     api = pinboard(fake_pinboard)
+    mirror = Mirror(tmp_path / "mirror.json")
     plan = build_plan(snapshot(ids), {})
-    assert execute_plan(plan, api, limit=1, log=lambda _: None).added == 1
-    outcome = execute_plan(plan, api, log=lambda _: None)
+    assert execute_plan(plan, api, mirror, limit=1, log=lambda _: None).added == 1
+    assert len(Mirror(tmp_path / "mirror.json").posts) == 1  # written to disk
+    mirror.posts.clear()
+    outcome = execute_plan(plan, api, mirror, log=lambda _: None)
     assert (outcome.added, outcome.already_there, outcome.failed) == (2, 1, 0)
+    # The one Pinboard already had is noted, so the next plan skips it.
+    assert len(mirror.posts) == 3
+    assert all(
+        a.op == SKIP
+        for a in build_plan(snapshot(ids), index_by_tweet_id(mirror.posts.values()))
+    )
 
     many = build_plan([Tweet(id=str(n), kinds={LIKE}) for n in range(1, 31)], {})
     fake_pinboard.fail_next = [404] * 5
@@ -255,6 +314,47 @@ def test_execute_counts_and_stops_after_a_run_of_failures(fake_pinboard, ids):
     assert "HTTP 404" in stopped.errors[0] and TOKEN not in stopped.errors[0]
     done = execute_plan(many, api, log=log.append)
     assert done.added == 30 and "  25 of 30 sent" in log
+
+
+def test_retag_works_from_the_bookmark_as_it_is_now(fake_pinboard, ids):
+    """Edits made after the local copy was taken survive a retag."""
+    api = pinboard(fake_pinboard)
+    stale = index_by_tweet_id(load("pinboard_export.json"))
+    plan = build_plan(snapshot(ids)[1:2], stale, tag_existing=True)
+    live = fake_pinboard.posts[0]
+    live["extended"] = "Edited since the copy was made"
+    live["tags"] = "datasette sqlite via:twitter-like newtag"
+    outcome = execute_plan(plan, api, log=lambda _: None)
+    assert outcome.retagged == 1
+    assert fake_pinboard.posts[0]["extended"] == "Edited since the copy was made"
+    assert fake_pinboard.posts[0]["tags"] == (
+        "datasette sqlite via:twitter-like newtag via:twitter-bookmark"
+    )
+    assert fake_pinboard.adds()[-1]["replace"] == "yes"
+
+    # Already tagged by now: nothing is sent.
+    again = execute_plan(plan, api, log=lambda _: None)
+    assert (again.retagged, again.already_there) == (0, 1)
+    assert len(fake_pinboard.adds()) == 1
+
+
+def test_retag_leaves_alone_what_it_cannot_resend_safely(fake_pinboard, ids):
+    api = pinboard(fake_pinboard)
+    stale = index_by_tweet_id(load("pinboard_export.json"))
+    plan = build_plan(snapshot(ids)[1:2], stale, tag_existing=True)
+    live = fake_pinboard.posts[0]
+    original = dict(live)
+
+    live["extended"] = "long " * 3000
+    outcome = execute_plan(plan, api, log=lambda _: None)
+    assert outcome.failed == 1 and "too long to send" in outcome.errors[0]
+    live["extended"], live["description"] = "", ""
+    outcome = execute_plan(plan, api, log=lambda _: None)
+    assert outcome.failed == 1 and "no title" in outcome.errors[0]
+    fake_pinboard.posts.remove(live)
+    outcome = execute_plan(plan, api, log=lambda _: None)
+    assert outcome.failed == 1 and "no longer in Pinboard" in outcome.errors[0]
+    assert fake_pinboard.adds() == [] and original["extended"]
 
 
 # -- Command line --------------------------------------------------------------
@@ -307,8 +407,9 @@ def test_full_backfill_is_idempotent(run, monkeypatch, fake_pinboard, fake_x, id
 
     code, out, _ = run("fetch")
     assert code == 0
-    assert "likes: read 4 in 2 page(s), 4 new" in out
-    assert "bookmarks: read 1 in 1 page(s), 1 new" in out
+    # Two of the four likes were already known from the archive.
+    assert "likes: read 4 in 2 page(s), 2 new (backfill complete)" in out
+    assert "bookmarks: read 1 in 1 page(s), 1 new (backfill complete)" in out
     assert "Snapshot now holds 6 tweets" in out
 
     # Dry run: a plan, and not one write.
@@ -348,17 +449,55 @@ def test_full_backfill_is_idempotent(run, monkeypatch, fake_pinboard, fake_x, id
     assert retagged["description"] == "Simon Willison on Twitter"
     assert retagged["time"] == "2025-03-14T09:12:44Z" and retagged["shared"] == "yes"
 
-    # A later fetch stops at the first page of tweets it has already seen.
-    before = len(fake_x.requests)
-    code, out, _ = run("fetch", "--only", "like")
-    assert "reached tweets already fetched" in out
-    assert len(fake_x.requests) - before == 1
-    code, out, _ = run("fetch", "--only", "like", "--full", "--max-pages", "1")
-    assert "stopped at --max-pages 1" in out
-
     code, out, _ = run("status")
     assert "Snapshot: 6 tweets" in out and "X sign-in: @rossshannon" in out
     assert "PINBOARD_TOKEN: set" in out and TOKEN not in out
+
+
+def test_fetch_resumes_an_unfinished_backfill(run, monkeypatch, fake_x):
+    sign_in(run, monkeypatch)
+
+    def requests_made(*argv):
+        before = len(fake_x.requests)
+        code, out, err = run(*argv)
+        return code, out + err, len(fake_x.requests) - before
+
+    # One page only: the place is remembered, and bookmarks are not started.
+    code, out, made = requests_made("fetch", "--max-pages", "1")
+    assert code == 0 and made == 1
+    assert "likes: stopped at --max-pages 1" in out
+    assert "likes: read 2 in 1 page(s), 2 new (backfill not finished" in out
+    assert "bookmarks: not read (--max-pages reached)" in out
+
+    # The next fetch carries on from page 2, not page 1, then looks at the
+    # top once for anything newer, and does the bookmarks.
+    code, out, made = requests_made("fetch")
+    assert "likes: carrying on the backfill from where it stopped" in out
+    assert "likes: read 4 in 2 page(s), 2 new (backfill complete)" in out
+    assert "bookmarks: read 1 in 1 page(s), 1 new (backfill complete)" in out
+    assert made == 3
+    assert fake_x.requests[-3].url.params["pagination_token"] == "NEXT1"
+
+    # Once complete, a fetch reads one page of each and stops at known tweets.
+    code, out, made = requests_made("fetch")
+    assert made == 2 and "likes: read 2 in 1 page(s), 0 new" in out
+    assert fake_x.requests[-1].url.params["max_results"] == "20"
+
+    # --full starts over from the newest.
+    code, out, made = requests_made("fetch", "--only", "like", "--full")
+    assert made == 2 and "likes: read 4 in 2 page(s), 0 new (backfill complete)" in out
+
+
+def test_fetch_explains_an_expired_place(run, monkeypatch, fake_x):
+    sign_in(run, monkeypatch)
+    run("fetch", "--only", "like", "--max-pages", "1")
+    del fake_x.pages["liked_tweets"]["NEXT1"]
+    code, _, err = run("fetch", "--only", "like")
+    assert code == 2 and "run `fetch --full --only like` to start it again" in err
+    # Without a saved place, the error is passed on as it is.
+    fake_x.pages["liked_tweets"].clear()
+    code, _, err = run("fetch", "--only", "like", "--full")
+    assert code == 2 and "start it again" not in err and "HTTP 400" in err
 
 
 def test_replace_no_protects_a_bookmark_the_index_missed(run, fake_pinboard, ids):
@@ -467,23 +606,46 @@ def test_damaged_snapshot_is_left_alone(run):
     assert path.read_text() == "{ truncated"
 
 
-def test_enrich_command(run, monkeypatch):
+def test_enrich_command_saves_as_it_goes(run, monkeypatch, ids):
     run("import-archive", str(FIXTURES / "like.js"))
-    seen = {}
+    answers = {ids["collison"]: "found", ids["gone"]: "missing"}
+    asked: list[str] = []
 
-    def fake_enrich(http, tweets, *, skip, limit, delay):
-        tweets = list(tweets)
-        seen.update(order=[t.id for t in tweets], skip=set(skip), limit=limit)
-        tweets[0].author_handle = "found"
-        return {"found": [tweets[0].id], "missing": [tweets[1].id], "failed": []}
+    def lookup(http, tweet):
+        asked.append(tweet.id)
+        result = answers.get(tweet.id, "failed")
+        if result == "found":
+            tweet.author_handle = "patrickc"
+        return result
 
-    monkeypatch.setattr(cli.oembed, "enrich", fake_enrich)
-    code, out, _ = run("enrich", "--limit", "2")
-    assert code == 0 and "Authors found for 1; 1 deleted or protected" in out
+    monkeypatch.setattr(cli.oembed, "lookup_author", lookup)
+    code, out, _ = run("enrich", "--delay", "0")
+    assert code == 0
+    assert "Authors found for 1; 1 deleted; 2 failed" in out
     assert "2 tweets still have no author" in out
-    assert seen["order"] == sorted(seen["order"], reverse=True) and seen["limit"] == 2
-    run("enrich")
-    assert seen["skip"] == {seen["order"][0]} or len(seen["skip"]) == 1
+    assert asked == sorted(asked, reverse=True) and len(asked) == 4
+    missing = json.loads((run.data_dir / "enrich-missing.json").read_text())
+    assert missing == [ids["gone"]]  # only the 404, never the failures
+
+    # Next time the deleted one is not asked about again.
+    asked.clear()
+    run("enrich", "--delay", "0", "--limit", "5")
+    assert len(asked) == 2 and ids["gone"] not in asked
+
+    # Interrupted part-way: what was found so far is already on disk.
+    answers[ids["old"]] = "found"
+
+    def interrupted(http, tweet):
+        if tweet.id == ids["old"]:
+            raise KeyboardInterrupt
+        tweet.author_handle = "simonw"
+        return "found"
+
+    monkeypatch.setattr(cli.oembed, "lookup_author", interrupted)
+    code, _, err = run("enrich", "--delay", "0")
+    assert code == 130
+    saved = json.loads((run.data_dir / "tweets.json").read_text())["tweets"]
+    assert {t["id"]: t["author_handle"] for t in saved}[ids["ifttt"]] == "simonw"
 
 
 def test_keyboard_interrupt_is_reported_calmly(run, monkeypatch):

@@ -50,7 +50,11 @@ def tweet_id_from_url(url: str) -> str | None:
             break
     if host not in _TWITTER_HOSTS:
         return None
-    match = _STATUS_PATH.match(parts.path)
+    path = parts.path
+    if path in ("", "/") and parts.fragment.startswith("!/"):
+        # 2010-12 "hashbang" addresses: twitter.com/#!/user/status/1
+        path = parts.fragment[1:].split("?")[0]
+    match = _STATUS_PATH.match(path)
     return match.group(1) if match else None
 
 

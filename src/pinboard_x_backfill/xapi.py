@@ -57,6 +57,17 @@ class XError(Exception):
     """An X API or sign-in failure, safe to show (never holds a token)."""
 
 
+def _json_object(response: httpx.Response, what: str) -> dict[str, Any]:
+    """The response body as a JSON object, or an XError saying it was not one."""
+    try:
+        data = response.json()
+    except ValueError:
+        data = None
+    if not isinstance(data, dict):
+        raise XError(f"{what} did not answer with JSON (HTTP {response.status_code})")
+    return data
+
+
 # -- OAuth 2.0 authorisation code with PKCE ---------------------------------
 
 
@@ -144,14 +155,14 @@ class XAuth:
         if response.status_code != 200:
             detail = ""
             try:
-                body = response.json()
+                body = _json_object(response, "X")
                 detail = str(body.get("error_description") or body.get("error") or "")
-            except ValueError:
+            except XError:
                 pass
             raise XError(
                 f"X token request failed: HTTP {response.status_code} {detail}".strip()
             )
-        tokens = response.json()
+        tokens = _json_object(response, "X's token endpoint")
         if not tokens.get("access_token"):
             raise XError("X token response held no access token")
         return tokens
@@ -286,7 +297,8 @@ class XClient:
                 )
             except httpx.HTTPError as error:
                 failure = type(error).__name__
-                self.sleep(2.0**attempt)
+                if attempt < _RETRIES - 1:
+                    self.sleep(2.0**attempt)
                 continue
             status = response.status_code
             if status in (200, 400):
@@ -299,10 +311,12 @@ class XClient:
                 reset = response.headers.get("x-rate-limit-reset", "")
                 wait = float(reset) - self.now() + 2 if reset.isdigit() else 60.0
                 wait = min(max(wait, 1.0), _MAX_RATE_LIMIT_WAIT)
-                self.log(f"X rate limit reached; waiting {int(wait)} s")
-                self.sleep(wait)
+                if attempt < _RETRIES - 1:
+                    self.log(f"X rate limit reached; waiting {int(wait)} s")
+                    self.sleep(wait)
             elif status >= 500:
-                self.sleep(2.0**attempt)
+                if attempt < _RETRIES - 1:
+                    self.sleep(2.0**attempt)
             else:
                 break
         raise XError(f"X API request to {path} failed: {failure}")
@@ -310,8 +324,10 @@ class XClient:
     def me(self) -> dict[str, str]:
         """The signed-in user's numeric id and handle."""
         response = self._get("/2/users/me", {})
-        data = response.json().get("data") if response.status_code == 200 else None
-        if not data or not data.get("id"):
+        data = None
+        if response.status_code == 200:
+            data = _json_object(response, "X").get("data")
+        if not isinstance(data, dict) or not data.get("id"):
             raise XError(
                 f"X did not say who is signed in (HTTP {response.status_code})"
             )
@@ -319,14 +335,25 @@ class XClient:
         self.auth.remember_user(user)
         return user
 
-    def pages(self, kind: str, user_id: str) -> Iterator[list[Tweet]]:
-        """Each page of the user's likes or bookmarks, newest first."""
+    def pages(
+        self,
+        kind: str,
+        user_id: str,
+        start_token: str | None = None,
+        page_size: int = 100,
+    ) -> Iterator[tuple[list[Tweet], str | None]]:
+        """Each page of the user's likes or bookmarks, newest first.
+
+        Yields the page's tweets with the token for the page after it (None
+        on the last page). ``start_token`` resumes from a token yielded
+        earlier. ``page_size`` is 5 to 100; every tweet read is paid for.
+        """
         path = f"/2/users/{user_id}/{_ENDPOINT[kind]}"
-        token: str | None = None
+        token = start_token
         while True:
             fields_name, note_name = _FIELD_STYLES[self._style]
             params = {
-                "max_results": "100",
+                "max_results": str(page_size),
                 fields_name: _POST_FIELDS.format(note=note_name),
                 "expansions": "author_id",
                 "user.fields": "username,name",
@@ -339,8 +366,8 @@ class XClient:
                     self._style += 1
                     continue
                 raise XError(f"X rejected the {kind}s request: HTTP 400")
-            payload = response.json()
-            yield parse_page(payload, kind)
-            token = (payload.get("meta") or {}).get("next_token")
+            payload = _json_object(response, "X")
+            token = (payload.get("meta") or {}).get("next_token") or None
+            yield parse_page(payload, kind), token
             if not token:
                 return

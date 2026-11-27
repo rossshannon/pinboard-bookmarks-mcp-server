@@ -1,6 +1,6 @@
 """Work out what to save to Pinboard, and save it without clobbering.
 
-Idempotency rests on Pinboard itself, not on local state:
+Idempotency rests on Pinboard itself:
 
 1. Before planning, every existing bookmark whose URL is a tweet is indexed
    by tweet id, whatever spelling of the URL it was saved under
@@ -10,17 +10,19 @@ Idempotency rests on Pinboard itself, not on local state:
    something Pinboard refuses to overwrite a bookmark with the same URL.
 
 Existing bookmarks are never rewritten, with one opt-in exception
-(``tag_existing``): adding a missing ``via:twitter-…`` tag, which resends the
-bookmark's own title, notes, tags, time and flags exactly as Pinboard
-returned them.
+(``tag_existing``): adding a missing ``via:twitter-…`` tag. That re-reads the
+bookmark from Pinboard immediately beforehand and resends its own title,
+notes, tags, time and flags.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlencode
 
 from pinboard_x_backfill.pinboard_api import PinboardAPI, PinboardError
 from pinboard_x_backfill.store import read_json, write_private_json
@@ -39,11 +41,13 @@ RETAG = "retag"
 SKIP = "skip"
 
 _MAX_CONSECUTIVE_FAILURES = 5
+_SAVE_EVERY = 25
+# Pinboard's API is GET-only; stay under the 8 KB request line servers allow.
+_MAX_ENCODED_REQUEST = 7000
 
 
-def tweet_posts(posts: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
-    """The bookmarks, out of any list of Pinboard posts, that are tweets."""
-    return [post for post in posts if tweet_id_from_url(str(post.get("href") or ""))]
+def is_tweet(post: dict[str, Any]) -> bool:
+    return tweet_id_from_url(str(post.get("href") or "")) is not None
 
 
 def index_by_tweet_id(posts: Iterable[dict[str, Any]]) -> dict[str, dict[str, Any]]:
@@ -61,39 +65,79 @@ def load_export(path: Path) -> list[dict[str, Any]]:
     data = read_json(path)
     if not isinstance(data, list):
         raise PinboardError(f"{path} is not a Pinboard JSON export")
-    return tweet_posts(post for post in data if isinstance(post, dict))
+    return [post for post in data if isinstance(post, dict) and is_tweet(post)]
 
 
-def load_existing(
-    api: PinboardAPI, cache_path: Path, log: Callable[[str], None] = print
-) -> list[dict[str, Any]]:
-    """Existing tweet bookmarks from Pinboard, via a local cache.
+def _a_day_before(moment: str) -> str | None:
+    try:
+        parsed = datetime.fromisoformat(moment.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    earlier = parsed.astimezone(timezone.utc) - timedelta(days=1)
+    return earlier.strftime("%Y-%m-%dT%H:%M:%SZ")
 
-    The cache is trusted only while Pinboard's ``posts/update`` time is the
-    one it was saved under, so any change to the account, including this
-    tool's own saves, causes a fresh download next time.
+
+class Mirror:
+    """A local copy of the account's tweet bookmarks.
+
+    Pinboard allows ``posts/all`` once every five minutes, so the whole list
+    is downloaded only once. After that the copy is kept current two ways:
+    this tool records its own saves in it, and each run asks Pinboard only
+    for bookmarks dated since the day before the copy was last brought up to
+    date. A bookmark deleted on Pinboard stays in the copy, so a tweet you
+    removed is not saved again; ``refresh(full=True)`` starts over.
     """
-    update_time = api.last_update()
-    cached = read_json(cache_path)
-    if (
-        isinstance(cached, dict)
-        and update_time
-        and cached.get("update_time") == update_time
-        and isinstance(cached.get("posts"), list)
-    ):
-        log(f"Pinboard unchanged since {update_time}; using the local copy")
-        return cached["posts"]
-    log("Downloading the bookmark list from Pinboard (a page at a time)…")
-    total = 0
-    posts = []
-    for post in api.all_posts():
-        total += 1
-        if tweet_id_from_url(str(post.get("href") or "")):
-            posts.append(post)
-    log(f"Pinboard has {total} bookmarks, {len(posts)} of them tweets")
-    if update_time and api.last_update() == update_time:
-        write_private_json(cache_path, {"update_time": update_time, "posts": posts})
-    return posts
+
+    def __init__(self, path: Path):
+        self.path = path
+        self.update_time = ""
+        self.posts: dict[str, dict[str, Any]] = {}
+        data = read_json(path)
+        if isinstance(data, dict) and isinstance(data.get("posts"), list):
+            self.update_time = str(data.get("update_time") or "")
+            for post in data["posts"]:
+                if isinstance(post, dict) and post.get("href"):
+                    self.posts[str(post["href"])] = post
+
+    def save(self) -> None:
+        write_private_json(
+            self.path,
+            {"update_time": self.update_time, "posts": list(self.posts.values())},
+        )
+
+    def record(self, post: dict[str, Any]) -> None:
+        self.posts[str(post["href"])] = post
+
+    def refresh(
+        self, api: PinboardAPI, full: bool = False, log: Callable[[str], None] = print
+    ) -> None:
+        current = api.last_update()
+        if not full and self.update_time and current == self.update_time:
+            log(f"Pinboard unchanged since {current}; using the local copy")
+            return
+        since = None if full else _a_day_before(self.update_time)
+        if since:
+            log(f"Asking Pinboard for bookmarks dated since {since}…")
+        else:
+            log(
+                "Downloading the whole bookmark list from Pinboard. Pinboard "
+                "allows one page every five minutes, so a large account takes "
+                "a while; this happens once."
+            )
+            self.posts = {}
+        total = 0
+        for post in api.all_posts(fromdt=since):
+            total += 1
+            if is_tweet(post):
+                self.record(post)
+        log(f"Read {total} bookmarks; the local copy holds {len(self.posts)} tweets")
+        # ``current`` was read before the download, so anything saved during
+        # it falls inside the next run's one-day overlap.
+        if current:
+            self.update_time = current
+        self.save()
 
 
 @dataclass
@@ -102,6 +146,7 @@ class Action:
     tweet: Tweet
     reason: str = ""
     post: dict[str, str] = field(default_factory=dict)
+    add_tags: list[str] = field(default_factory=list)
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -149,6 +194,28 @@ def retag_post(existing: dict[str, Any], missing: list[str]) -> dict[str, str]:
     return post
 
 
+def as_pinboard_post(params: dict[str, str]) -> dict[str, Any]:
+    """``posts/add`` parameters in the shape ``posts/all`` returns."""
+    return {
+        "href": params["url"],
+        "description": params.get("description", ""),
+        "extended": params.get("extended", ""),
+        "tags": params.get("tags", ""),
+        "time": params.get("dt", ""),
+        "shared": params.get("shared", ""),
+        "toread": params.get("toread", ""),
+    }
+
+
+def _missing_tags(tweet: Tweet, post: dict[str, Any]) -> list[str]:
+    have = set(_existing_tags(post))
+    return [
+        TAG_FOR_KIND[kind]
+        for kind in KINDS
+        if kind in tweet.kinds and TAG_FOR_KIND[kind] not in have
+    ]
+
+
 def build_plan(
     tweets: Iterable[Tweet],
     existing: dict[str, dict[str, Any]],
@@ -170,12 +237,7 @@ def build_plan(
             post = new_post(tweet, host, shared, extra_tags or [])
             plan.append(Action(ADD, tweet, "not in Pinboard", post))
             continue
-        have = set(_existing_tags(found))
-        missing = [
-            TAG_FOR_KIND[kind]
-            for kind in KINDS
-            if kind in tweet.kinds and TAG_FOR_KIND[kind] not in have
-        ]
+        missing = _missing_tags(tweet, found)
         if tag_existing and missing and found.get("description"):
             plan.append(
                 Action(
@@ -184,6 +246,7 @@ def build_plan(
                     f"already saved as {found.get('href')}; adding "
                     + " ".join(missing),
                     retag_post(found, missing),
+                    missing,
                 )
             )
         else:
@@ -201,9 +264,30 @@ class Outcome:
     errors: list[str] = field(default_factory=list)
 
 
+def _send(action: Action, api: PinboardAPI) -> tuple[str, dict[str, str] | None]:
+    """Send one action. Returns Pinboard's result code and what was saved."""
+    post = action.post
+    if action.op == RETAG:
+        # Work from the bookmark as it is right now, not as it was when the
+        # local copy was made: anything edited since must survive.
+        fresh = api.get(post["url"])
+        if fresh is None:
+            return "error: no longer in Pinboard under that address", None
+        missing = _missing_tags(action.tweet, fresh)
+        if not missing:
+            return "item already exists", as_pinboard_post(retag_post(fresh, []))
+        if not fresh.get("description"):
+            return "error: the bookmark has no title to resend", None
+        post = retag_post(fresh, missing)
+    if len(urlencode(post)) > _MAX_ENCODED_REQUEST:
+        return "error: too long to send in one request; left untouched", None
+    return api.add(post, replace=action.op == RETAG), post
+
+
 def execute_plan(
     plan: list[Action],
     api: PinboardAPI,
+    mirror: Mirror | None = None,
     *,
     limit: int | None = None,
     log: Callable[[str], None] = print,
@@ -211,35 +295,50 @@ def execute_plan(
     """Send the plan's adds and retags to Pinboard, in order.
 
     ``limit`` caps how many writes are attempted. A run of failures stops
-    the whole thing rather than hammering Pinboard.
+    the whole thing rather than hammering Pinboard. Each save is recorded in
+    the mirror, which is written to disk as the run goes.
     """
     outcome = Outcome()
     writes = [action for action in plan if action.op in (ADD, RETAG)]
     if limit is not None:
         writes = writes[:limit]
     streak = 0
-    for number, action in enumerate(writes, start=1):
-        try:
-            code = api.add(action.post, replace=action.op == RETAG)
-        except PinboardError as error:
-            code = f"error: {error}"
-        if code == "done":
-            streak = 0
-            if action.op == ADD:
-                outcome.added += 1
+    try:
+        for number, action in enumerate(writes, start=1):
+            sent: dict[str, str] | None = None
+            try:
+                code, sent = _send(action, api)
+            except PinboardError as error:
+                code = f"error: {error}"
+            if code == "done":
+                streak = 0
+                if action.op == ADD:
+                    outcome.added += 1
+                else:
+                    outcome.retagged += 1
+            elif code == "item already exists":
+                streak = 0
+                outcome.already_there += 1
             else:
-                outcome.retagged += 1
-        elif code == "item already exists":
-            streak = 0
-            outcome.already_there += 1
-        else:
-            streak += 1
-            outcome.failed += 1
-            outcome.errors.append(f"{action.post.get('url')}: {code}")
+                streak += 1
+                outcome.failed += 1
+                outcome.errors.append(f"{action.post.get('url')}: {code}")
+            if mirror is not None and sent is not None:
+                if code == "done":
+                    mirror.record(as_pinboard_post(sent))
+                elif code == "item already exists" and sent["url"] not in mirror.posts:
+                    # Pinboard has it though the local copy did not: note the
+                    # address so the next plan skips it.
+                    mirror.record({"href": sent["url"]})
             if streak >= _MAX_CONSECUTIVE_FAILURES:
                 outcome.stopped_early = True
                 log(f"Stopping: {streak} saves failed in a row")
                 break
-        if number % 25 == 0:
-            log(f"  {number} of {len(writes)} sent")
+            if number % _SAVE_EVERY == 0:
+                log(f"  {number} of {len(writes)} sent")
+                if mirror is not None:
+                    mirror.save()
+    finally:
+        if mirror is not None:
+            mirror.save()
     return outcome

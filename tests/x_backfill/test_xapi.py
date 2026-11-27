@@ -99,7 +99,9 @@ def test_token_errors_are_reported_without_secrets(fake_x, tmp_path):
 def test_paging_likes_and_bookmarks(fake_x, tmp_path, ids):
     auth, client, _ = make(fake_x, tmp_path)
     auth.exchange_code("c", "v", "r")
-    pages = list(client.pages(LIKE, "999"))
+    listing = list(client.pages(LIKE, "999"))
+    assert [token for _, token in listing] == ["NEXT1", None]
+    pages = [tweets for tweets, _ in listing]
     assert [len(page) for page in pages] == [2, 2]
     both, collison = pages[0]
     assert (
@@ -119,16 +121,19 @@ def test_paging_likes_and_bookmarks(fake_x, tmp_path, ids):
     assert request.url.params["max_results"] == "100"
     assert "note_tweet" in request.url.params["tweet.fields"]
 
-    bookmarks = list(client.pages(BOOKMARK, "999"))
+    bookmarks = [tweets for tweets, _ in client.pages(BOOKMARK, "999")]
     assert [[t.id for t in page] for page in bookmarks] == [[ids["both"]]]
     assert bookmarks[0][0].kinds == {BOOKMARK}
+
+    resumed = list(client.pages(LIKE, "999", "NEXT1"))
+    assert len(resumed) == 1 and resumed[0][1] is None
 
 
 def test_switches_to_post_fields_when_tweet_fields_is_rejected(fake_x, tmp_path):
     auth, client, _ = make(fake_x, tmp_path)
     auth.exchange_code("c", "v", "r")
     fake_x.reject_tweet_fields = True
-    assert sum(len(page) for page in client.pages(LIKE, "999")) == 4
+    assert sum(len(page) for page, _ in client.pages(LIKE, "999")) == 4
     assert "note_post" in fake_x.requests[-1].url.params["post.fields"]
 
 
@@ -190,7 +195,7 @@ def test_network_errors_are_retried_then_reported(tmp_path, fake_x):
     client = XClient(http, auth, sleep=waits.append)
     with pytest.raises(XError, match="ConnectError"):
         client.me()
-    assert waits == [1.0, 2.0, 4.0, 8.0]
+    assert waits == [1.0, 2.0, 4.0]  # no pointless wait after the last try
 
 
 def test_token_endpoint_unreachable(tmp_path):
@@ -221,9 +226,11 @@ def test_oembed_enrich():
             },
         ),
         "2": httpx.Response(404),
-        "3": httpx.Response(500),
+        "3": httpx.Response(403),
         "4": httpx.Response(200, text="not json"),
         "5": httpx.Response(200, json={"author_url": "https://twitter.com/"}),
+        "7": httpx.Response(200, json=["a list"]),
+        "8": httpx.Response(404),
     }
     asked = []
 
@@ -234,20 +241,31 @@ def test_oembed_enrich():
         return answers[tweet_id]
 
     http = httpx.Client(transport=httpx.MockTransport(handler))
-    tweets = [Tweet(id=str(n), kinds={LIKE}) for n in range(1, 6)]
-    tweets.append(Tweet(id="6", kinds={LIKE}, author_handle="known"))
+    tweets = [Tweet(id=str(n), kinds={LIKE}) for n in range(1, 9)]
+    tweets[5].author_handle = "known"
     waits: list[float] = []
-    results = oembed.enrich(http, tweets, skip={"2"}, sleep=waits.append)
-    assert asked == ["1", "3", "4", "5"]
-    assert results == {"found": ["1"], "missing": ["5"], "failed": ["3", "4"]}
+    results = [
+        (tweet.id, result)
+        for tweet, result in oembed.enrich(http, tweets, skip={"2"}, sleep=waits.append)
+    ]
+    assert asked == ["1", "3", "4", "5", "7", "8"]
+    # Only a 404 is a lasting "missing"; a 403 or an odd answer is retried.
+    assert results == [
+        ("1", "found"),
+        ("3", "failed"),
+        ("4", "failed"),
+        ("5", "failed"),
+        ("7", "failed"),
+        ("8", "missing"),
+    ]
     assert (tweets[0].author_handle, tweets[0].author_name) == (
         "simonw",
         "Simon Willison",
     )
-    assert waits == [1.0, 1.0, 1.0]
+    assert waits == [1.0] * 5
 
-    limited = oembed.enrich(http, tweets, skip=set(), limit=1, sleep=waits.append)
-    assert limited == {"found": [], "missing": ["2"], "failed": []}
+    limited = list(oembed.enrich(http, tweets, skip=set(), limit=1, sleep=waits.append))
+    assert [(t.id, r) for t, r in limited] == [("2", "missing")]
 
 
 def test_oembed_stops_after_repeated_failures():
@@ -256,5 +274,48 @@ def test_oembed_stops_after_repeated_failures():
 
     http = httpx.Client(transport=httpx.MockTransport(handler))
     tweets = [Tweet(id=str(n), kinds={LIKE}) for n in range(20)]
-    results = oembed.enrich(http, tweets, skip=set(), sleep=lambda _: None)
-    assert len(results["failed"]) == 5
+    results = list(oembed.enrich(http, tweets, skip=set(), sleep=lambda _: None))
+    assert len(results) == oembed.MAX_FAILURES_IN_A_ROW == 10
+
+
+def test_a_200_that_is_not_json_is_a_clean_error(fake_x, tmp_path):
+    auth, client, _ = make(fake_x, tmp_path)
+    auth.exchange_code("c", "v", "r")
+    html = httpx.Response(200, text="<html>captive portal</html>")
+    fake_x.queue = [html]
+    with pytest.raises(XError, match="did not answer with JSON"):
+        client.me()
+    fake_x.queue = [httpx.Response(200, json=["a", "list"])]
+    with pytest.raises(XError, match="did not answer with JSON"):
+        list(client.pages(LIKE, "999"))
+    fake_x.queue = [httpx.Response(200, json={"data": "nope"})]
+    with pytest.raises(XError, match="did not say who is signed in"):
+        client.me()
+
+    def portal(request):
+        return httpx.Response(200, text="<html>")
+
+    http = httpx.Client(transport=httpx.MockTransport(portal))
+    with pytest.raises(XError, match="token endpoint did not answer with JSON"):
+        XAuth(http, TokenStore(tmp_path / "t2.json"), "c").exchange_code("c", "v", "r")
+
+    def refused(request):
+        return httpx.Response(502, text="bad gateway")
+
+    http = httpx.Client(transport=httpx.MockTransport(refused))
+    with pytest.raises(XError, match="HTTP 502$"):
+        XAuth(http, TokenStore(tmp_path / "t3.json"), "c").exchange_code("c", "v", "r")
+
+
+def test_no_wait_after_the_last_attempt(fake_x, tmp_path):
+    auth, client, waits = make(fake_x, tmp_path)
+    auth.exchange_code("c", "v", "r")
+    fake_x.queue = [httpx.Response(429)] * 4
+    with pytest.raises(XError, match="HTTP 429"):
+        client.me()
+    assert waits == [60.0, 60.0, 60.0]
+    waits.clear()
+    fake_x.queue = [httpx.Response(500)] * 4
+    with pytest.raises(XError, match="HTTP 500"):
+        client.me()
+    assert waits == [1.0, 2.0, 4.0]

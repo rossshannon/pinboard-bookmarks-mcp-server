@@ -21,8 +21,9 @@ X data archive (like.js) ──import─┘
 
 1. **`fetch`** reads your likes and bookmarks from the X API into a local
    snapshot. Reading costs money per tweet (see [Cost](#cost)), so the
-   snapshot is kept and later fetches stop as soon as they reach tweets
-   already fetched.
+   snapshot is kept, an interrupted backfill carries on from the page it
+   reached, and once the backfill is complete a fetch reads small pages and
+   stops at the first one holding a tweet it already has.
 2. **`import-archive`** adds the likes from an X data archive. The archive
    holds every like the account still has, which the API may not page back to.
 3. **`sync`** compares the snapshot with Pinboard and prints a plan. It is a
@@ -52,17 +53,30 @@ characters (fewer for non-Latin scripts and emoji).
 
 - Before planning, every existing bookmark whose URL is a tweet is indexed by
   **tweet id**. `twitter.com` and `x.com`, `www.` and `mobile.`, a handle or
-  `/i/web/status/`, tracking parameters and `/photo/1` suffixes all resolve to
-  the same id, so a tweet IFTTT saved years ago as
+  `/i/web/status/`, tracking parameters, `/photo/1` suffixes and 2011-style
+  `#!/` addresses all resolve to the same id, so a tweet IFTTT saved years ago as
   `https://twitter.com/user/status/1?s=20` is recognised and skipped.
 - Every new save is sent with `replace=no`. If the index missed something,
   Pinboard itself refuses to overwrite a bookmark with the same URL.
 - Existing bookmarks are never rewritten. The one exception is opt-in:
   `sync --tag-existing` adds a missing `via:twitter-…` tag to tweets already
-  in Pinboard, by resending the bookmark's own title, notes, tags, date and
-  flags exactly as Pinboard returned them moments earlier.
-- Nothing depends on local state. Delete the data folder and the next `sync`
-  reaches the same plan from Pinboard alone.
+  in Pinboard. It re-reads each bookmark from Pinboard immediately before
+  resending its own title, notes, tags, date and flags, and leaves alone any
+  bookmark whose notes are too long to resend in one request.
+- Correctness does not depend on local state. Delete the data folder and the
+  next `sync` reaches the same plan from Pinboard alone.
+
+### The local copy of your tweet bookmarks
+
+Pinboard allows its "all bookmarks" call once every five minutes, so `sync`
+downloads the full list only the first time (5,000 bookmarks a page; an
+account of 20,000 takes about a quarter of an hour). After that it keeps a
+local copy current by recording its own saves and asking Pinboard only for
+bookmarks dated since the day before the previous run. Two consequences:
+
+- A tweet bookmark you delete on Pinboard stays in the local copy, so the
+  tweet is **not** saved again. That is usually what you want.
+- `sync --refresh` throws the copy away and downloads the list again.
 
 ## Setup
 
@@ -120,11 +134,11 @@ uv run pinboard-x-backfill import-archive ~/Downloads/twitter-2026-….zip
 Archive likes carry text but no author. Two ways to fill authors in, both
 **before** the first `sync --write` (a saved bookmark is never rewritten):
 
-- `fetch --full` pages the API all the way back; anything it returns
-  replaces the archive copy with the full record.
+- `fetch` pages the API all the way back; anything it returns replaces the
+  archive copy with the full record.
 - `enrich` asks X's free public oEmbed endpoint for each author, one a
-  second. Experimental: it has not been run against the live service yet.
-  Try `enrich --limit 20` first.
+  second, saving as it goes. Experimental: it has not been run against the
+  live service yet. Try `enrich --limit 20` first.
 
 ## Running it
 
@@ -137,7 +151,7 @@ uv run pinboard-x-backfill sync --plan-out plan.json
 
 # 3. Save ten, check them on pinboard.in, then save the rest.
 uv run pinboard-x-backfill sync --write --limit 10
-uv run pinboard-x-backfill fetch --full
+uv run pinboard-x-backfill fetch          # carries on from page 2 to the end
 uv run pinboard-x-backfill sync --write
 ```
 
@@ -158,8 +172,12 @@ Run them on a schedule (cron or launchd), for example hourly:
 pinboard-x-backfill fetch && pinboard-x-backfill sync --write
 ```
 
-Each run reads one page of likes and one of bookmarks unless there is more
-that is new.
+Once the backfill is complete, each run reads the newest 20 likes and 20
+bookmarks, and more only when all 20 are new. That is 4 cents a run at the
+owned-read rate. X's pricing page says a tweet read twice in one UTC day is
+charged once, which would make an hourly schedule cost little more than a
+daily one, but it calls that a "soft guarantee", so check the console after
+the first day.
 
 ### Other commands and options
 
@@ -168,6 +186,8 @@ that is new.
 | `status` | What is in the data folder, and which credentials are set |
 | `--data-dir DIR` | Default `~/.local/share/pinboard-x-backfill` (honours `XDG_DATA_HOME`) |
 | `fetch --only like` / `--only bookmark` | One source only (also on `sync`) |
+| `fetch --full` | Start the backfill again from the newest tweet |
+| `sync --refresh` | Download the whole bookmark list again |
 | `sync --url-host twitter.com` | Save `twitter.com` URLs instead of `x.com` |
 | `sync --tag NAME` | Extra tag on new bookmarks (repeatable) |
 | `sync --show N` | How many sample actions to print |

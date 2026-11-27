@@ -52,7 +52,14 @@ class FakePinboard:
             return httpx.Response(200, json={"update_time": self.update_time})
         if method == "posts/all":
             start, count = int(params["start"]), int(params["results"])
-            return httpx.Response(200, json=self.posts[start : start + count])
+            since = params.get("fromdt", "")
+            posts = [p for p in self.posts if p.get("time", "") >= since]
+            return httpx.Response(200, json=posts[start : start + count])
+        if method == "posts/get":
+            found = [p for p in self.posts if p["href"] == params["url"]]
+            return httpx.Response(
+                200, json={"date": "x", "user": "ross", "posts": found}
+            )
         if method == "posts/add":
             found = next((p for p in self.posts if p["href"] == params["url"]), None)
             if found and params["replace"] == "no":
@@ -130,7 +137,10 @@ class FakeX:
             return httpx.Response(400, json={"title": "Invalid Request"})
         for endpoint, pages in self.pages.items():
             if path == f"/2/users/999/{endpoint}":
-                return httpx.Response(200, json=pages[params.get("pagination_token")])
+                page = pages.get(params.get("pagination_token"))
+                if page is None:
+                    return httpx.Response(400, json={"title": "Invalid Request"})
+                return httpx.Response(200, json=page)
         return httpx.Response(404, json={"title": "Not Found"})
 
 

@@ -37,6 +37,8 @@ from .conftest import FIXTURES
         "https://twitter.com/simonw/statuses/1900456864773046272",
         "https://X.com/SimonW/status/1900456864773046272/photo/1",
         "  https://x.com/simonw/status/1900456864773046272  ",
+        "https://twitter.com/#!/simonw/status/1900456864773046272",
+        "http://twitter.com/#!/simonw/statuses/1900456864773046272?x=1",
     ],
 )
 def test_every_spelling_of_a_tweet_url_gives_the_same_id(url):
@@ -52,6 +54,8 @@ def test_every_spelling_of_a_tweet_url_gives_the_same_id(url):
         "https://x.com/simonw/status/abc",
         "https://x.com/simonw/status/123abc",
         "https://x.com/i/lists/123",
+        "https://twitter.com/#!/simonw",
+        "https://twitter.com/search#!/a/status/1900456864773046272",
         "http://[bad",
         "",
     ],
@@ -247,8 +251,8 @@ def test_store_round_trip(tmp_path):
     assert store.merge([Tweet(id="2", kinds={LIKE}, source="archive")]) == (1, 0)
     assert store.merge([Tweet(id="2", kinds={LIKE}, text="t", source="api")]) == (0, 1)
     assert store.merge([Tweet(id="2", kinds={LIKE}, text="t", source="api")]) == (0, 0)
-    assert store.fetched("2", LIKE) and not store.fetched("2", BOOKMARK)
-    assert not store.fetched("3", LIKE)
+    assert store.has("2", LIKE) and not store.has("2", BOOKMARK)
+    assert not store.has("3", LIKE)
     store.save()
     assert path.stat().st_mode & 0o777 == 0o600
     again = TweetStore(path)

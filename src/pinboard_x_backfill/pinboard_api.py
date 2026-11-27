@@ -52,12 +52,18 @@ class PinboardAPI:
 
     def _call(self, method: str, params: dict[str, str] | None = None) -> Any:
         query = {**(params or {}), "auth_token": self._token, "format": "json"}
-        backoff = self.min_interval * 2
+        # posts/all is limited to one call every five minutes, far tighter
+        # than the three seconds that applies elsewhere.
+        backoff = 60.0 if method == "posts/all" else self.min_interval * 2
         failure = "no response"
-        for _ in range(_ATTEMPTS):
+        for attempt in range(_ATTEMPTS):
             self._pace()
             try:
                 response = self.http.get(f"{API_BASE}/{method}", params=query)
+            except httpx.InvalidURL:
+                raise PinboardError(
+                    f"Pinboard {method}: the request is too long to send"
+                ) from None
             except httpx.HTTPError as error:
                 failure = type(error).__name__
             else:
@@ -76,6 +82,8 @@ class PinboardAPI:
                 failure = f"HTTP {status}"
                 if status != 429 and status < 500:
                     break
+            if attempt == _ATTEMPTS - 1:
+                break
             self.log(f"Pinboard {method}: {failure}; waiting {int(backoff)} s")
             self.sleep(backoff)
             backoff = min(backoff * 2, _BACKOFF_CAP)
@@ -86,19 +94,30 @@ class PinboardAPI:
         result = self._call("posts/update")
         return str(result.get("update_time") or "") if isinstance(result, dict) else ""
 
-    def all_posts(self, page_size: int = 2000) -> Iterator[dict[str, Any]]:
-        """Every bookmark, fetched a page at a time with start/results."""
+    def all_posts(
+        self, page_size: int = 5000, fromdt: str | None = None
+    ) -> Iterator[dict[str, Any]]:
+        """Bookmarks, a page at a time; only those dated after ``fromdt`` if set."""
         start = 0
         while True:
-            page = self._call(
-                "posts/all", {"start": str(start), "results": str(page_size)}
-            )
+            params = {"start": str(start), "results": str(page_size)}
+            if fromdt:
+                params["fromdt"] = fromdt
+            page = self._call("posts/all", params)
             if not isinstance(page, list):
                 raise PinboardError("Pinboard posts/all did not return a list")
             yield from (post for post in page if isinstance(post, dict))
             if len(page) < page_size:
                 return
             start += len(page)
+
+    def get(self, url: str) -> dict[str, Any] | None:
+        """The bookmark saved under exactly this URL, or None (``posts/get``)."""
+        result = self._call("posts/get", {"url": url})
+        posts = result.get("posts") if isinstance(result, dict) else None
+        if not isinstance(posts, list):
+            raise PinboardError("Pinboard posts/get gave no list of posts")
+        return next((p for p in posts if isinstance(p, dict)), None)
 
     def add(self, post: dict[str, str], replace: bool) -> str:
         """Save a bookmark. Returns Pinboard's result code.

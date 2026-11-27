@@ -52,21 +52,18 @@ class TweetStore:
         self.tweets: dict[str, Tweet] = {}
         if path.exists():
             data = json.loads(path.read_text(encoding="utf-8"))
-            for item in data.get("tweets", []):
+            if not isinstance(data, dict) or not isinstance(data.get("tweets"), list):
+                raise ValueError("not a tweet snapshot")
+            for item in data["tweets"]:
                 tweet = Tweet.from_json(item)
                 self.tweets[tweet.id] = tweet
 
     def __len__(self) -> int:
         return len(self.tweets)
 
-    def fetched(self, tweet_id: str, kind: str) -> bool:
-        """Whether the API has already returned this tweet as this kind.
-
-        A copy that came only from the data archive does not count: the API
-        version carries the author, so it is still worth reading.
-        """
+    def has(self, tweet_id: str, kind: str) -> bool:
         tweet = self.tweets.get(tweet_id)
-        return tweet is not None and kind in tweet.kinds and tweet.source == "api"
+        return tweet is not None and kind in tweet.kinds
 
     def merge(self, tweets: list[Tweet]) -> tuple[int, int]:
         """Fold tweets in. Returns how many were new and how many changed."""
@@ -85,3 +82,32 @@ class TweetStore:
         write_private_json(
             self.path, {"version": 1, "tweets": [t.to_json() for t in ordered]}
         )
+
+
+class FetchState:
+    """How far the first full read of each kind has got.
+
+    ``complete`` is set once a read has reached the oldest like or bookmark.
+    Until then ``next_token`` is the page to carry on from, so an interrupted
+    backfill resumes where it stopped instead of starting, and paying, again.
+    """
+
+    def __init__(self, path: Path):
+        self.path = path
+        data = read_json(path)
+        self.kinds: dict[str, dict[str, Any]] = data if isinstance(data, dict) else {}
+
+    def _entry(self, kind: str) -> dict[str, Any]:
+        entry = self.kinds.get(kind)
+        return entry if isinstance(entry, dict) else {}
+
+    def complete(self, kind: str) -> bool:
+        return bool(self._entry(kind).get("complete"))
+
+    def next_token(self, kind: str) -> str | None:
+        token = self._entry(kind).get("next_token")
+        return str(token) if token else None
+
+    def update(self, kind: str, *, complete: bool, next_token: str | None) -> None:
+        self.kinds[kind] = {"complete": complete, "next_token": next_token}
+        write_private_json(self.path, self.kinds)

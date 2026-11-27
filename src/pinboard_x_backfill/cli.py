@@ -19,6 +19,7 @@ from pinboard_x_backfill import __version__, oembed
 from pinboard_x_backfill.archive import ArchiveError, read_archive
 from pinboard_x_backfill.pinboard_api import PinboardAPI, PinboardError
 from pinboard_x_backfill.store import (
+    FetchState,
     TweetStore,
     default_data_dir,
     read_json,
@@ -28,10 +29,10 @@ from pinboard_x_backfill.sync import (
     ADD,
     RETAG,
     SKIP,
+    Mirror,
     build_plan,
     execute_plan,
     index_by_tweet_id,
-    load_existing,
     load_export,
 )
 from pinboard_x_backfill.tweets import BOOKMARK, KINDS, LIKE
@@ -137,29 +138,90 @@ def cmd_auth(args: argparse.Namespace) -> int:
 # -- fetch ---------------------------------------------------------------------
 
 
+_NEW_PAGE_SIZE = 20
+
+
+class _PageBudget:
+    """Counts pages against --max-pages across both kinds."""
+
+    def __init__(self, limit: int):
+        self.limit = limit
+        self.used = 0
+
+    def spent(self) -> bool:
+        return bool(self.limit) and self.used >= self.limit
+
+
+def _fetch_kind(
+    args: argparse.Namespace,
+    client: XClient,
+    user_id: str,
+    kind: str,
+    store: TweetStore,
+    state: FetchState,
+    budget: _PageBudget,
+) -> None:
+    """Read one kind: first the unfinished backfill, then anything newer."""
+    if args.full:
+        state.update(kind, complete=False, next_token=None)
+    passes: list[tuple[str, str | None]] = []
+    if not state.complete(kind):
+        passes.append(("backfill", state.next_token(kind)))
+    if state.complete(kind) or state.next_token(kind):
+        # Likes made since the backfill began sit above its first page.
+        passes.append(("new", None))
+
+    pages = read = new_total = 0
+    for name, start in passes:
+        if budget.spent():
+            break
+        if start:
+            print(f"  {kind}s: carrying on the backfill from where it stopped")
+        try:
+            # Looking for new tweets, read small pages: each tweet costs.
+            size = 100 if name == "backfill" else _NEW_PAGE_SIZE
+            for tweets, next_token in client.pages(kind, user_id, start, size):
+                pages += 1
+                budget.used += 1
+                read += len(tweets)
+                seen = sum(1 for t in tweets if store.has(t.id, kind))
+                store.merge(tweets)
+                store.save()
+                new_total += len(tweets) - seen
+                if name == "backfill":
+                    state.update(
+                        kind, complete=next_token is None, next_token=next_token
+                    )
+                elif seen:
+                    break  # caught up with what the snapshot already has
+                if budget.spent():
+                    print(f"  {kind}s: stopped at --max-pages {args.max_pages}")
+                    break
+        except XError as error:
+            if not start:
+                raise
+            raise XError(
+                f"{error}. The saved place in the {kind}s backfill may have "
+                f"expired; run `fetch --full --only {kind}` to start it again"
+            ) from None
+    done = "complete" if state.complete(kind) else "not finished; run fetch again"
+    print(f"{kind}s: read {read} in {pages} page(s), {new_total} new (backfill {done})")
+
+
 def cmd_fetch(args: argparse.Namespace) -> int:
     store = _store(args)
+    state = FetchState(args.data_dir / "fetch-state.json")
+    budget = _PageBudget(args.max_pages)
     with _http() as http:
         auth = _x_auth(args, http)
         client = XClient(http, auth)
         saved = (auth.store.load() or {}).get("user") or {}
         user_id = saved.get("id") or client.me()["id"]
         for kind in _kinds(args):
-            pages = read = new_total = 0
-            for tweets in client.pages(kind, user_id):
-                pages += 1
-                read += len(tweets)
-                unseen = sum(1 for t in tweets if not store.fetched(t.id, kind))
-                store.merge(tweets)
-                store.save()
-                new_total += unseen
-                if tweets and not unseen and not args.full:
-                    print(f"  {kind}s: reached tweets already fetched; stopping")
-                    break
-                if args.max_pages and pages >= args.max_pages:
-                    print(f"  {kind}s: stopped at --max-pages {args.max_pages}")
-                    break
-            print(f"{kind}s: read {read} in {pages} page(s), {new_total} new")
+            if budget.spent():
+                print(f"{kind}s: not read (--max-pages reached)")
+                continue
+            _fetch_kind(args, client, user_id, kind, store, state, budget)
     print(f"Snapshot now holds {len(store)} tweets: {store.path}")
     return 0
 
@@ -188,27 +250,36 @@ def cmd_enrich(args: argparse.Namespace) -> int:
     store = _store(args)
     missed_path = args.data_dir / "enrich-missing.json"
     missed = read_json(missed_path)
-    skip = set(missed) if isinstance(missed, list) else set()
+    gone = {str(i) for i in missed} if isinstance(missed, list) else set()
     newest_first = sorted(
         store.tweets.values(), key=lambda t: (len(t.id), t.id), reverse=True
     )
-    with _http() as http:
-        results = oembed.enrich(
-            http, newest_first, skip=skip, limit=args.limit, delay=args.delay
-        )
-    store.save()
-    write_private_json(missed_path, sorted(skip | set(results[oembed.MISSING])))
+    counts: Counter[str] = Counter()
+
+    def save() -> None:
+        store.save()
+        write_private_json(missed_path, sorted(gone))
+
+    try:
+        with _http() as http:
+            lookups = oembed.enrich(
+                http, newest_first, skip=set(gone), limit=args.limit, delay=args.delay
+            )
+            for tweet, result in lookups:
+                counts[result] += 1
+                if result == oembed.MISSING:
+                    gone.add(tweet.id)
+                if sum(counts.values()) % 25 == 0:
+                    save()
+    finally:
+        save()
     print(
-        f"Authors found for {len(results[oembed.FOUND])}; "
-        f"{len(results[oembed.MISSING])} deleted or protected; "
-        f"{len(results[oembed.FAILED])} failed (will be retried next time)."
+        f"Authors found for {counts[oembed.FOUND]}; "
+        f"{counts[oembed.MISSING]} deleted; "
+        f"{counts[oembed.FAILED]} failed (will be tried again next time)."
     )
     left = sum(
-        1
-        for t in store.tweets.values()
-        if not t.author_handle
-        and t.id not in skip
-        and t.id not in results[oembed.MISSING]
+        1 for t in store.tweets.values() if not t.author_handle and t.id not in gone
     )
     print(f"{left} tweets still have no author looked up.")
     return 0
@@ -229,6 +300,7 @@ def cmd_sync(args: argparse.Namespace) -> int:
     token = os.environ.get("PINBOARD_TOKEN", "").strip()
     with _http() as http:
         api = None
+        mirror = None
         if args.pinboard_export:
             existing_posts = load_export(args.pinboard_export)
             print(
@@ -237,7 +309,9 @@ def cmd_sync(args: argparse.Namespace) -> int:
             )
         elif token:
             api = PinboardAPI(token, http)
-            existing_posts = load_existing(api, args.data_dir / "pinboard-tweets.json")
+            mirror = Mirror(args.data_dir / "pinboard-tweets.json")
+            mirror.refresh(api, full=args.refresh)
+            existing_posts = list(mirror.posts.values())
         else:
             raise UsageError(
                 "set PINBOARD_TOKEN (username:HEXTOKEN, from "
@@ -273,7 +347,7 @@ def cmd_sync(args: argparse.Namespace) -> int:
             print("\nDry run: nothing was sent to Pinboard. Add --write to save.")
             return 0
         assert api is not None
-        outcome = execute_plan(plan, api, limit=args.limit)
+        outcome = execute_plan(plan, api, mirror, limit=args.limit)
     print(
         f"\nSaved {outcome.added}, tagged {outcome.retagged}, "
         f"{outcome.already_there} were already there, {outcome.failed} failed."
@@ -341,10 +415,13 @@ def build_parser() -> argparse.ArgumentParser:
     fetch.add_argument(
         "--full",
         action="store_true",
-        help="page all the way back instead of stopping at tweets already fetched",
+        help="start the backfill again from the newest and page all the way back",
     )
     fetch.add_argument(
-        "--max-pages", type=int, default=0, help="stop after this many pages of 100"
+        "--max-pages",
+        type=int,
+        default=0,
+        help="stop after this many pages; the next fetch carries on",
     )
     fetch.set_defaults(run=cmd_fetch)
 
@@ -375,6 +452,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--pinboard-export",
         type=Path,
         help="compare against a Pinboard JSON export instead of the API (dry run only)",
+    )
+    sync.add_argument(
+        "--refresh",
+        action="store_true",
+        help="download the whole bookmark list again instead of only recent changes",
     )
     sync.add_argument(
         "--tag-existing",
