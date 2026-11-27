@@ -2,8 +2,10 @@
 
 import functools
 import json
+import socket
 import threading
 import urllib.request
+from urllib.parse import urlencode
 
 import httpx
 import pytest
@@ -61,12 +63,26 @@ def test_calls_are_spaced_three_seconds_apart(fake_pinboard):
 def test_all_posts_pages_until_a_short_page():
     fake = FakePinboard([{"href": f"https://e.com/{n}"} for n in range(5)])
     api = pinboard(fake)
-    assert len(list(api.all_posts(page_size=2))) == 5
-    assert [params for _, params in fake.calls] == [
-        {"start": "0", "results": "2"},
-        {"start": "2", "results": "2"},
-        {"start": "4", "results": "2"},
-    ]
+    seen = [post["href"] for post in api.all_posts(page_size=2)]
+    # Pages overlap, so nothing slips through if the list shifts between them.
+    assert [params["start"] for _, params in fake.calls] == ["0", "1", "2", "3", "4"]
+    assert len(set(seen)) == 5
+
+
+def test_all_posts_misses_nothing_when_a_bookmark_is_deleted_between_pages():
+    fake = FakePinboard([{"href": f"https://e.com/{n}"} for n in range(450)])
+    real = fake.handler
+
+    def handler(request):
+        response = real(request)
+        if request.url.params.get("start") == "0":
+            del fake.posts[5]  # deleted while waiting for the second page
+        return response
+
+    http = httpx.Client(transport=httpx.MockTransport(handler))
+    api = PinboardAPI(TOKEN, http, min_interval=0.0)
+    seen = {post["href"] for post in api.all_posts(page_size=200)}
+    assert len(seen) == 450
 
 
 def test_backs_off_on_429_and_5xx_then_succeeds(fake_pinboard):
@@ -338,23 +354,77 @@ def test_retag_works_from_the_bookmark_as_it_is_now(fake_pinboard, ids):
     assert len(fake_pinboard.adds()) == 1
 
 
-def test_retag_leaves_alone_what_it_cannot_resend_safely(fake_pinboard, ids):
+def test_retag_leaves_alone_what_it_cannot_resend_safely(fake_pinboard, tmp_path, ids):
     api = pinboard(fake_pinboard)
     stale = index_by_tweet_id(load("pinboard_export.json"))
     plan = build_plan(snapshot(ids)[1:2], stale, tag_existing=True)
     live = fake_pinboard.posts[0]
     original = dict(live)
 
+    mirror = Mirror(tmp_path / "mirror.json")
+
     live["extended"] = "long " * 3000
-    outcome = execute_plan(plan, api, log=lambda _: None)
-    assert outcome.failed == 1 and "too long to send" in outcome.errors[0]
+    outcome = execute_plan(plan, api, mirror, log=lambda _: None)
+    assert outcome.failed == 0 and "too long to resend" in outcome.left_alone[0]
     live["extended"], live["description"] = "", ""
-    outcome = execute_plan(plan, api, log=lambda _: None)
-    assert outcome.failed == 1 and "no title" in outcome.errors[0]
+    outcome = execute_plan(plan, api, mirror, log=lambda _: None)
+    assert outcome.failed == 0 and "no title" in outcome.left_alone[0]
     fake_pinboard.posts.remove(live)
-    outcome = execute_plan(plan, api, log=lambda _: None)
-    assert outcome.failed == 1 and "no longer in Pinboard" in outcome.errors[0]
+    outcome = execute_plan(plan, api, mirror, log=lambda _: None)
+    assert outcome.failed == 0 and "no longer in Pinboard" in outcome.left_alone[0]
     assert fake_pinboard.adds() == [] and original["extended"]
+    # The deleted one is remembered by address only: the tweet is neither
+    # saved again nor planned for tagging again.
+    replanned = build_plan(
+        snapshot(ids)[1:2], index_by_tweet_id(mirror.posts.values()), tag_existing=True
+    )
+    assert [a.op for a in replanned] == [SKIP]
+
+
+def test_bookmarks_left_alone_do_not_stop_the_run(fake_pinboard, tmp_path):
+    """Many unfixable retags in a row must not block the saves behind them."""
+    api = pinboard(fake_pinboard)
+    gone = {
+        str(n): {"href": f"https://x.com/a/status/{n}", "description": "t", "tags": ""}
+        for n in range(1, 9)
+    }
+    tweets = [Tweet(id=str(n), kinds={LIKE}) for n in range(1, 10)]
+    plan = build_plan(tweets, gone, tag_existing=True)
+    assert [a.op for a in plan] == [RETAG] * 8 + [ADD]
+    outcome = execute_plan(plan, api, Mirror(tmp_path / "m.json"), log=lambda _: None)
+    assert len(outcome.left_alone) == 8 and not outcome.stopped_early
+    assert (outcome.added, outcome.failed) == (1, 0)
+
+
+def test_retag_already_tagged_updates_the_mirror(fake_pinboard, tmp_path, ids):
+    """Tagged elsewhere since the copy was made: no write, no crash, copy fixed."""
+    api = pinboard(fake_pinboard)
+    mirror = Mirror(tmp_path / "mirror.json")
+    stale = load("pinboard_export.json")[0]
+    mirror.record(stale)
+    fake_pinboard.posts[0]["tags"] = "datasette via:twitter-like via:twitter-bookmark"
+    plan = build_plan(
+        snapshot(ids)[1:2], index_by_tweet_id(mirror.posts.values()), tag_existing=True
+    )
+    outcome = execute_plan(plan, api, mirror, log=lambda _: None)
+    assert (outcome.already_there, outcome.retagged, outcome.failed) == (1, 0, 0)
+    assert mirror.posts[stale["href"]]["tags"] == fake_pinboard.posts[0]["tags"]
+    assert fake_pinboard.adds() == []
+
+
+def test_an_emoji_heavy_tweet_still_fits_in_one_request(fake_pinboard, ids):
+    tweet = Tweet(
+        id=ids["long"],
+        kinds={LIKE, BOOKMARK},
+        text="🙂" * 600,
+        author_handle="rauchg",
+        author_name="Guillermo Rauch",
+    )
+    (action,) = build_plan([tweet], {}, extra_tags=["x" * 300])
+    assert len(urlencode(action.post)) <= 7000
+    assert "Posted: " in action.post["extended"]
+    outcome = execute_plan([action], pinboard(fake_pinboard), log=lambda _: None)
+    assert outcome.added == 1 and not outcome.left_alone
 
 
 # -- Command line --------------------------------------------------------------
@@ -493,11 +563,71 @@ def test_fetch_explains_an_expired_place(run, monkeypatch, fake_x):
     run("fetch", "--only", "like", "--max-pages", "1")
     del fake_x.pages["liked_tweets"]["NEXT1"]
     code, _, err = run("fetch", "--only", "like")
-    assert code == 2 and "run `fetch --full --only like` to start it again" in err
+    assert code == 2 and "run `fetch --full --only like` to start again" in err
     # Without a saved place, the error is passed on as it is.
     fake_x.pages["liked_tweets"].clear()
     code, _, err = run("fetch", "--only", "like", "--full")
-    assert code == 2 and "start it again" not in err and "HTTP 400" in err
+    assert code == 2 and "start again" not in err and "HTTP 400" in err
+
+
+def test_a_failure_part_way_through_a_resumed_read_is_not_blamed_on_the_place(
+    run, monkeypatch, fake_x
+):
+    sign_in(run, monkeypatch)
+    run("fetch", "--only", "like", "--max-pages", "1")
+    fake_x.queue = [httpx.Response(403)]
+    code, _, err = run("fetch", "--only", "like")
+    assert code == 2 and "HTTP 403" in err and "start again" not in err
+    # The place is kept, so a plain fetch still carries on from page 2.
+    code, out, _ = run("fetch", "--only", "like")
+    assert code == 0 and "carrying on the backfill" in out
+
+
+def test_a_cut_short_read_of_new_tweets_is_finished_next_time(
+    run, monkeypatch, fake_x, ids
+):
+    """No hole is left when a look for new tweets stops before catching up."""
+    sign_in(run, monkeypatch)
+    run("fetch", "--only", "bookmark")  # backfill complete: holds one bookmark
+    old = fake_x.pages["bookmarks"][None]
+
+    def page(tweet_id, next_token=None):
+        meta = {"next_token": next_token} if next_token else {}
+        return {"data": [{"id": tweet_id, "text": "new"}], "meta": meta}
+
+    fake_x.pages["bookmarks"] = {
+        None: page("3000000000000000003", "P2"),
+        "P2": page("3000000000000000002", "P3"),
+        "P3": page("3000000000000000001", "P4"),
+        "P4": old,
+    }
+    code, out, _ = run("fetch", "--only", "bookmark", "--max-pages", "1")
+    assert "bookmarks: read 1 in 1 page(s), 1 new" in out
+
+    code, out, _ = run("fetch", "--only", "bookmark")
+    assert "carrying on the last read from where it stopped" in out
+    # Pages 2, 3 and 4 (which meets the known tweet), then one look at the top.
+    assert "bookmarks: read 4 in 4 page(s), 2 new" in out
+    snapshot_ids = {
+        t["id"]
+        for t in json.loads((run.data_dir / "tweets.json").read_text())["tweets"]
+    }
+    assert {"3000000000000000001", "3000000000000000002"} <= snapshot_ids
+    state = json.loads((run.data_dir / "fetch-state.json").read_text())
+    assert state["bookmark"]["new_token"] is None
+
+
+def test_full_resets_every_kind_even_if_the_page_budget_runs_out(
+    run, monkeypatch, fake_x
+):
+    sign_in(run, monkeypatch)
+    run("fetch")
+    code, out, _ = run("fetch", "--full", "--max-pages", "1")
+    assert "bookmarks: not read (--max-pages reached)" in out
+    state = json.loads((run.data_dir / "fetch-state.json").read_text())
+    assert state["bookmark"]["complete"] is False
+    code, out, _ = run("fetch")
+    assert "bookmarks: read 1 in 1 page(s), 0 new (backfill complete)" in out
 
 
 def test_replace_no_protects_a_bookmark_the_index_missed(run, fake_pinboard, ids):
@@ -573,6 +703,8 @@ def test_usage_errors(run, monkeypatch):
     code, _, err = run("import-archive", "/no/such/archive.zip")
     assert code == 2 and "no such file" in err
     code, _, err = run("auth", "--redirect-uri", "https://example.com/cb")
+    assert code == 2 and "--redirect-uri" in err
+    code, _, err = run("auth", "--redirect-uri", "http://127.0.0.1:abc/cb")
     assert code == 2 and "--redirect-uri" in err
     code, out, _ = run("status")
     assert "X sign-in: none" in out and "PINBOARD_TOKEN: not set" in out
@@ -663,6 +795,9 @@ def test_keyboard_interrupt_is_reported_calmly(run, monkeypatch):
     assert code == 130 and "safe to run the same command again" in err
 
 
+_PARSER = cli.build_parser
+
+
 def _with_run(parser, function):
     original = parser.parse_args
 
@@ -675,9 +810,30 @@ def _with_run(parser, function):
     return parser
 
 
-def test_loopback_redirect_listener():
-    import socket
+def test_listener_gives_up_and_reports_a_busy_port():
+    with socket.socket() as busy:
+        busy.bind(("127.0.0.1", 0))
+        busy.listen()
+        port = busy.getsockname()[1]
+        with pytest.raises(cli.UsageError, match="could not listen"):
+            cli.wait_for_redirect("127.0.0.1", port, "/callback")
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+    with pytest.raises(cli.UsageError, match="did not send the browser back"):
+        cli.wait_for_redirect("127.0.0.1", port, "/callback", patience=-1)
 
+
+def test_file_trouble_is_a_clean_error(run, monkeypatch):
+    def full_disk(args):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(cli, "build_parser", lambda: _with_run(_PARSER(), full_disk))
+    code, _, err = run("status")
+    assert code == 2 and "No space left on device" in err
+
+
+def test_loopback_redirect_listener():
     with socket.socket() as probe:
         probe.bind(("127.0.0.1", 0))
         port = probe.getsockname()[1]

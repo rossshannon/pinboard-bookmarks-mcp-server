@@ -97,7 +97,14 @@ class PinboardAPI:
     def all_posts(
         self, page_size: int = 5000, fromdt: str | None = None
     ) -> Iterator[dict[str, Any]]:
-        """Bookmarks, a page at a time; only those dated after ``fromdt`` if set."""
+        """Bookmarks, a page at a time; only those dated after ``fromdt`` if set.
+
+        Pages are fetched by offset and can be minutes apart, so a bookmark
+        deleted in between would shift the rest up and let one slip through
+        the gap. Each page therefore starts a little before the previous one
+        ended: callers may see the same bookmark twice, never miss one.
+        """
+        overlap = min(100, page_size // 2)
         start = 0
         while True:
             params = {"start": str(start), "results": str(page_size)}
@@ -109,7 +116,7 @@ class PinboardAPI:
             yield from (post for post in page if isinstance(post, dict))
             if len(page) < page_size:
                 return
-            start += len(page)
+            start += len(page) - overlap
 
     def get(self, url: str) -> dict[str, Any] | None:
         """The bookmark saved under exactly this URL, or None (``posts/get``)."""

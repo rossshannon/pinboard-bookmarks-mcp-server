@@ -12,6 +12,7 @@ from pinboard_x_backfill.tweets import (
     LIKE,
     NOTES_MAX_ENCODED,
     TITLE_MAX,
+    TITLE_MAX_ENCODED,
     Tweet,
     bookmark_notes,
     bookmark_tags,
@@ -127,7 +128,12 @@ def test_long_fields_are_cut_to_fit(ids):
         author_name="Guillermo Rauch",
     )
     title = bookmark_title(tweet)
-    assert len(title) == TITLE_MAX and title.endswith("…")
+    assert len(title) <= TITLE_MAX and title.endswith("…")
+    assert len(quote(title, safe="")) <= TITLE_MAX_ENCODED
+    plain = bookmark_title(Tweet(id="1", text="word " * 200))
+    assert len(plain) == TITLE_MAX and plain.endswith("…")
+    cjk = bookmark_title(Tweet(id="1", text="語" * 400))
+    assert len(cjk) == TITLE_MAX  # 255 CJK characters still fit
     notes = bookmark_notes(tweet)
     assert len(quote(notes, safe="")) <= NOTES_MAX_ENCODED
     assert notes.endswith(f"Posted: {snowflake_time(ids['long'])}")
@@ -236,6 +242,21 @@ def test_read_archive_from_file_folder_and_zip(tmp_path, ids):
         archive.write(data / "tweets.js", "data/tweets.js")
         archive.writestr("assets/like.js", "not the real one")
     assert len(read_archive(zipped)) == 4
+
+
+def test_unreadable_archives_are_clean_errors(tmp_path):
+    binary = tmp_path / "like.js"
+    binary.write_bytes(b"\xff\xfe\x00 not utf-8")
+    with pytest.raises(ArchiveError, match="could not be read"):
+        read_archive(binary)
+
+
+@pytest.mark.parametrize("content", ["[1]", '{"tweets": [1]}', '{"tweets": [{}]}', "{"])
+def test_a_malformed_snapshot_is_refused_not_half_loaded(tmp_path, content):
+    path = tmp_path / "tweets.json"
+    path.write_text(content)
+    with pytest.raises(ValueError):
+        TweetStore(path)
 
 
 def test_read_archive_errors(tmp_path):

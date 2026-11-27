@@ -108,7 +108,11 @@ def read_archive(path: Path) -> list[Tweet]:
     """Every like and bookmark in an archive zip, folder, or single .js file."""
     merged: dict[str, Tweet] = {}
     found = False
-    for source in _sources(path):
+    try:
+        sources = list(_sources(path))
+    except (UnicodeDecodeError, zipfile.BadZipFile):
+        raise ArchiveError(f"{path} could not be read as an X archive") from None
+    for source in sources:
         found = True
         for tweet in parse_archive_js(source):
             if tweet.id in merged:

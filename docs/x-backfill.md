@@ -36,7 +36,7 @@ For each tweet not already in Pinboard:
 | Pinboard field | Value |
 | --- | --- |
 | URL | `https://x.com/<handle>/status/<id>` (or `https://x.com/i/web/status/<id>` when the author is unknown) |
-| Title | `Full Name (@handle): tweet text` on one line, cut to 255 characters |
+| Title | `Full Name (@handle): tweet text` on one line, cut to 255 characters (fewer if it is mostly emoji) |
 | Notes | The full text with `t.co` links expanded, a blank line, then `Author: Full Name (@handle)` and `Posted: 2026-11-20T14:03:00Z` |
 | Tags | `via:twitter-like` and/or `via:twitter-bookmark` (both if you did both), plus any `--tag` |
 | Date | When the tweet was posted. X does not say when you liked it. |
@@ -61,8 +61,9 @@ characters (fewer for non-Latin scripts and emoji).
 - Existing bookmarks are never rewritten. The one exception is opt-in:
   `sync --tag-existing` adds a missing `via:twitter-…` tag to tweets already
   in Pinboard. It re-reads each bookmark from Pinboard immediately before
-  resending its own title, notes, tags, date and flags, and leaves alone any
-  bookmark whose notes are too long to resend in one request.
+  resending its own title, notes, tags, date and flags. A bookmark whose
+  notes are too long to resend in one request, or that you have since
+  deleted, is listed as "left alone" and not touched.
 - Correctness does not depend on local state. Delete the data folder and the
   next `sync` reaches the same plan from Pinboard alone.
 

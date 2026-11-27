@@ -20,6 +20,7 @@ TAG_FOR_KIND = {LIKE: "via:twitter-like", BOOKMARK: "via:twitter-bookmark"}
 # (measured URL-encoded) that keeps the whole request comfortably under the
 # 8 KB request-line limit common to web servers.
 TITLE_MAX = 255
+TITLE_MAX_ENCODED = 2300
 NOTES_MAX_ENCODED = 4000
 
 _TWITTER_HOSTS = {"twitter.com", "x.com"}
@@ -204,11 +205,15 @@ def bookmark_title(tweet: Tweet) -> str:
         title = f"{who}: tweet {tweet.id}"
     else:
         title = text or f"Tweet {tweet.id}"
-    return _truncate(title, TITLE_MAX)
+    # 255 characters of emoji would be 3 KB of URL; keep that in check too.
+    return _truncate_encoded(_truncate(title, TITLE_MAX), TITLE_MAX_ENCODED)
 
 
-def bookmark_notes(tweet: Tweet) -> str:
-    """The full text, then ``Author:`` and ``Posted:`` lines when known."""
+def bookmark_notes(tweet: Tweet, max_encoded: int = NOTES_MAX_ENCODED) -> str:
+    """The full text, then ``Author:`` and ``Posted:`` lines when known.
+
+    The text is cut so the whole, URL-encoded, fits in ``max_encoded`` bytes.
+    """
     trailer = []
     if tweet.author_handle:
         name = _one_line(tweet.author_name)
@@ -217,8 +222,8 @@ def bookmark_notes(tweet: Tweet) -> str:
     if tweet.posted_at:
         trailer.append(f"Posted: {tweet.posted_at}")
     tail = "\n".join(trailer)
-    room = NOTES_MAX_ENCODED - len(quote("\n\n" + tail, safe=""))
-    body = _truncate_encoded(tweet.text, room)
+    room = max_encoded - len(quote("\n\n" + tail, safe=""))
+    body = _truncate_encoded(tweet.text, room) if room > 0 else ""
     return "\n\n".join(part for part in (body, tail) if part)
 
 

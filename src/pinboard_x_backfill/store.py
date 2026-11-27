@@ -55,6 +55,8 @@ class TweetStore:
             if not isinstance(data, dict) or not isinstance(data.get("tweets"), list):
                 raise ValueError("not a tweet snapshot")
             for item in data["tweets"]:
+                if not isinstance(item, dict) or "id" not in item:
+                    raise ValueError("not a tweet snapshot")
                 tweet = Tweet.from_json(item)
                 self.tweets[tweet.id] = tweet
 
@@ -85,11 +87,13 @@ class TweetStore:
 
 
 class FetchState:
-    """How far the first full read of each kind has got.
+    """How far the reading of each kind has got.
 
     ``complete`` is set once a read has reached the oldest like or bookmark.
     Until then ``next_token`` is the page to carry on from, so an interrupted
     backfill resumes where it stopped instead of starting, and paying, again.
+    ``new_token`` does the same for a later read of new tweets that was cut
+    short before it met the tweets already held.
     """
 
     def __init__(self, path: Path):
@@ -108,6 +112,10 @@ class FetchState:
         token = self._entry(kind).get("next_token")
         return str(token) if token else None
 
-    def update(self, kind: str, *, complete: bool, next_token: str | None) -> None:
-        self.kinds[kind] = {"complete": complete, "next_token": next_token}
+    def new_token(self, kind: str) -> str | None:
+        token = self._entry(kind).get("new_token")
+        return str(token) if token else None
+
+    def update(self, kind: str, **fields: Any) -> None:
+        self.kinds[kind] = {**self._entry(kind), **fields}
         write_private_json(self.path, self.kinds)

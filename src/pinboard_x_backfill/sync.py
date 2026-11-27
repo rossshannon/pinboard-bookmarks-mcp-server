@@ -28,6 +28,7 @@ from pinboard_x_backfill.pinboard_api import PinboardAPI, PinboardError
 from pinboard_x_backfill.store import read_json, write_private_json
 from pinboard_x_backfill.tweets import (
     KINDS,
+    NOTES_MAX_ENCODED,
     TAG_FOR_KIND,
     Tweet,
     bookmark_notes,
@@ -169,13 +170,16 @@ def new_post(
     post = {
         "url": tweet.url(host),
         "description": bookmark_title(tweet),
-        "extended": bookmark_notes(tweet),
+        "extended": "",
         "tags": " ".join(bookmark_tags(tweet, extra_tags)),
         "shared": "yes" if shared else "no",
         "toread": "no",
     }
     if tweet.posted_at:
         post["dt"] = tweet.posted_at
+    # The notes get whatever room the rest of the request leaves.
+    room = _MAX_ENCODED_REQUEST - len(urlencode(post))
+    post["extended"] = bookmark_notes(tweet, min(NOTES_MAX_ENCODED, room))
     return post
 
 
@@ -262,26 +266,48 @@ class Outcome:
     failed: int = 0
     stopped_early: bool = False
     errors: list[str] = field(default_factory=list)
+    # Bookmarks deliberately not touched, with why. Not failures.
+    left_alone: list[str] = field(default_factory=list)
 
 
-def _send(action: Action, api: PinboardAPI) -> tuple[str, dict[str, str] | None]:
-    """Send one action. Returns Pinboard's result code and what was saved."""
+DONE = "done"
+EXISTS = "item already exists"
+LEFT = "left alone"
+
+
+def _send(action: Action, api: PinboardAPI) -> tuple[str, str, dict[str, Any] | None]:
+    """Send one action.
+
+    Returns a result (DONE, EXISTS, LEFT, or Pinboard's own error code), a
+    reason for LEFT, and the bookmark as Pinboard now holds it when known.
+    """
     post = action.post
     if action.op == RETAG:
         # Work from the bookmark as it is right now, not as it was when the
         # local copy was made: anything edited since must survive.
         fresh = api.get(post["url"])
         if fresh is None:
-            return "error: no longer in Pinboard under that address", None
+            # Deleted on Pinboard. Keep only its address, so the tweet is
+            # neither saved again nor planned for tagging again.
+            return LEFT, "no longer in Pinboard", {"href": post["url"]}
         missing = _missing_tags(action.tweet, fresh)
         if not missing:
-            return "item already exists", as_pinboard_post(retag_post(fresh, []))
+            return EXISTS, "", fresh
         if not fresh.get("description"):
-            return "error: the bookmark has no title to resend", None
+            return LEFT, "it has no title to resend", fresh
         post = retag_post(fresh, missing)
-    if len(urlencode(post)) > _MAX_ENCODED_REQUEST:
-        return "error: too long to send in one request; left untouched", None
-    return api.add(post, replace=action.op == RETAG), post
+        if len(urlencode(post)) > _MAX_ENCODED_REQUEST:
+            return LEFT, "its notes are too long to resend in one request", fresh
+    elif len(urlencode(post)) > _MAX_ENCODED_REQUEST:
+        return LEFT, "too long to send in one request", None
+    code = api.add(post, replace=action.op == RETAG)
+    if code == DONE:
+        return DONE, "", as_pinboard_post(post)
+    if code == EXISTS:
+        # Pinboard has it though the local copy did not. Read it, so the
+        # copy holds the real bookmark and not just its address.
+        return EXISTS, "", api.get(post["url"]) or {"href": post["url"]}
+    return code, "", None
 
 
 def execute_plan(
@@ -305,35 +331,35 @@ def execute_plan(
     streak = 0
     try:
         for number, action in enumerate(writes, start=1):
-            sent: dict[str, str] | None = None
+            url = action.post.get("url")
+            now: dict[str, Any] | None = None
             try:
-                code, sent = _send(action, api)
+                result, reason, now = _send(action, api)
             except PinboardError as error:
-                code = f"error: {error}"
-            if code == "done":
+                result, reason = f"error: {error}", ""
+            if mirror is not None and now is not None:
+                mirror.record(now)
+            if result == DONE:
                 streak = 0
                 if action.op == ADD:
                     outcome.added += 1
                 else:
                     outcome.retagged += 1
-            elif code == "item already exists":
+            elif result == EXISTS:
                 streak = 0
                 outcome.already_there += 1
+            elif result == LEFT:
+                # A property of that one bookmark, not a sign Pinboard is
+                # unwell: it does not count towards stopping the run.
+                outcome.left_alone.append(f"{url}: {reason}")
             else:
                 streak += 1
                 outcome.failed += 1
-                outcome.errors.append(f"{action.post.get('url')}: {code}")
-            if mirror is not None and sent is not None:
-                if code == "done":
-                    mirror.record(as_pinboard_post(sent))
-                elif code == "item already exists" and sent["url"] not in mirror.posts:
-                    # Pinboard has it though the local copy did not: note the
-                    # address so the next plan skips it.
-                    mirror.record({"href": sent["url"]})
-            if streak >= _MAX_CONSECUTIVE_FAILURES:
-                outcome.stopped_early = True
-                log(f"Stopping: {streak} saves failed in a row")
-                break
+                outcome.errors.append(f"{url}: {result}")
+                if streak >= _MAX_CONSECUTIVE_FAILURES:
+                    outcome.stopped_early = True
+                    log(f"Stopping: {streak} saves failed in a row")
+                    break
             if number % _SAVE_EVERY == 0:
                 log(f"  {number} of {len(writes)} sent")
                 if mirror is not None:

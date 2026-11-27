@@ -7,6 +7,7 @@ import logging
 import os
 import secrets
 import sys
+import time
 import webbrowser
 from collections import Counter
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -62,7 +63,7 @@ def _store(args: argparse.Namespace) -> TweetStore:
     path = args.data_dir / "tweets.json"
     try:
         return TweetStore(path)
-    except ValueError:
+    except (ValueError, TypeError, KeyError, AttributeError):
         raise UsageError(
             f"{path} is damaged and cannot be read. Move it aside to start again; "
             "it has not been changed."
@@ -84,11 +85,18 @@ def _kinds(args: argparse.Namespace) -> list[str]:
 # -- auth ----------------------------------------------------------------------
 
 
-def wait_for_redirect(host: str, port: int, path: str) -> str:
-    """Serve one request on the loopback redirect URI; return its full URL."""
+def wait_for_redirect(host: str, port: int, path: str, patience: float = 300.0) -> str:
+    """Serve the loopback redirect URI until X sends the browser back to it.
+
+    Returns the full URL that was requested. Gives up after ``patience``
+    seconds, and no single connection can hold the listener for more than a
+    few seconds (browsers open idle "preconnect" sockets).
+    """
     seen: list[str] = []
 
     class Handler(BaseHTTPRequestHandler):
+        timeout = 5
+
         def do_GET(self) -> None:  # noqa: N802 (http.server's naming)
             if urlsplit(self.path).path != path:
                 self.send_response(404)
@@ -103,15 +111,32 @@ def wait_for_redirect(host: str, port: int, path: str) -> str:
         def log_message(self, format: str, *values: object) -> None:
             pass  # the request line holds the authorisation code
 
-    with HTTPServer((host, port), Handler) as server:
+    try:
+        server = HTTPServer((host, port), Handler)
+    except OSError:
+        raise UsageError(
+            f"could not listen on {host}:{port} (is something else using it?); "
+            "try `auth --paste`"
+        ) from None
+    deadline = time.monotonic() + patience
+    with server:
+        server.timeout = 1.0
         while not seen:
+            if time.monotonic() > deadline:
+                raise UsageError(
+                    "X did not send the browser back in time; try `auth --paste`"
+                )
             server.handle_request()
     return f"http://{host}:{port}{seen[0]}"
 
 
 def cmd_auth(args: argparse.Namespace) -> int:
     redirect = urlsplit(args.redirect_uri)
-    if redirect.hostname not in ("127.0.0.1", "localhost") or not redirect.port:
+    try:
+        port = redirect.port
+    except ValueError:
+        port = None
+    if redirect.hostname not in ("127.0.0.1", "localhost") or not port:
         raise UsageError("--redirect-uri must be http://127.0.0.1:<port>/<path>")
     with _http() as http:
         auth = _x_auth(args, http)
@@ -126,7 +151,7 @@ def cmd_auth(args: argparse.Namespace) -> int:
             webbrowser.open(url)
             print(f"Waiting for X to send you back to {args.redirect_uri} …")
             redirected = wait_for_redirect(
-                redirect.hostname, redirect.port, redirect.path or "/"
+                redirect.hostname, port, redirect.path or "/"
             )
         code = code_from_redirect(redirected, state)
         auth.exchange_code(code, verifier, args.redirect_uri)
@@ -161,13 +186,14 @@ def _fetch_kind(
     state: FetchState,
     budget: _PageBudget,
 ) -> None:
-    """Read one kind: first the unfinished backfill, then anything newer."""
-    if args.full:
-        state.update(kind, complete=False, next_token=None)
+    """Read one kind: the unfinished backfill first, then anything newer."""
     passes: list[tuple[str, str | None]] = []
     if not state.complete(kind):
         passes.append(("backfill", state.next_token(kind)))
-    if state.complete(kind) or state.next_token(kind):
+    if state.new_token(kind):
+        # An earlier look for new tweets was cut short: finish it first.
+        passes.append(("new", state.new_token(kind)))
+    if state.complete(kind) or state.next_token(kind) or state.new_token(kind):
         # Likes made since the backfill began sit above its first page.
         passes.append(("new", None))
 
@@ -176,7 +202,9 @@ def _fetch_kind(
         if budget.spent():
             break
         if start:
-            print(f"  {kind}s: carrying on the backfill from where it stopped")
+            what = "backfill" if name == "backfill" else "last read"
+            print(f"  {kind}s: carrying on the {what} from where it stopped")
+        pages_before = pages
         try:
             # Looking for new tweets, read small pages: each tweet costs.
             size = 100 if name == "backfill" else _NEW_PAGE_SIZE
@@ -192,17 +220,22 @@ def _fetch_kind(
                     state.update(
                         kind, complete=next_token is None, next_token=next_token
                     )
-                elif seen:
-                    break  # caught up with what the snapshot already has
+                else:
+                    # Caught up once a page holds a tweet already in the
+                    # snapshot; until then remember where to carry on.
+                    state.update(kind, new_token=None if seen else next_token)
+                    if seen:
+                        break
                 if budget.spent():
                     print(f"  {kind}s: stopped at --max-pages {args.max_pages}")
                     break
         except XError as error:
-            if not start:
+            expired = start and pages == pages_before and "HTTP 400" in str(error)
+            if not expired:
                 raise
             raise XError(
-                f"{error}. The saved place in the {kind}s backfill may have "
-                f"expired; run `fetch --full --only {kind}` to start it again"
+                f"{error}. The saved place in the {kind}s may have expired; "
+                f"run `fetch --full --only {kind}` to start again from the newest"
             ) from None
     done = "complete" if state.complete(kind) else "not finished; run fetch again"
     print(f"{kind}s: read {read} in {pages} page(s), {new_total} new (backfill {done})")
@@ -212,6 +245,9 @@ def cmd_fetch(args: argparse.Namespace) -> int:
     store = _store(args)
     state = FetchState(args.data_dir / "fetch-state.json")
     budget = _PageBudget(args.max_pages)
+    if args.full:
+        for kind in _kinds(args):
+            state.update(kind, complete=False, next_token=None, new_token=None)
     with _http() as http:
         auth = _x_auth(args, http)
         client = XClient(http, auth)
@@ -354,6 +390,10 @@ def cmd_sync(args: argparse.Namespace) -> int:
     )
     for line in outcome.errors[:20]:
         print(f"  failed: {line}")
+    if outcome.left_alone:
+        print(f"{len(outcome.left_alone)} left alone:")
+    for line in outcome.left_alone[:20]:
+        print(f"  {line}")
     return 1 if outcome.failed else 0
 
 
@@ -487,6 +527,11 @@ def main(argv: list[str] | None = None) -> int:
     try:
         return int(args.run(args))
     except (UsageError, XError, PinboardError, ArchiveError) as error:
+        print(f"pinboard-x-backfill: {error}", file=sys.stderr)
+        return 2
+    except OSError as error:
+        # File and socket trouble (a full disk, an unreadable path). These
+        # never carry a request URL, so the message is safe to show.
         print(f"pinboard-x-backfill: {error}", file=sys.stderr)
         return 2
     except KeyboardInterrupt:
