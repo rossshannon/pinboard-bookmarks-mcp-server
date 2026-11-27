@@ -30,6 +30,15 @@ logger = logging.getLogger(__name__)
 DEFAULT_MODEL = "BAAI/bge-small-en-v1.5"
 
 MODEL_ENV_VAR = "PINBOARD_EMBEDDING_MODEL"
+MIN_SIMILARITY_ENV_VAR = "PINBOARD_SEMANTIC_MIN_SIMILARITY"
+
+#: Cosine similarity below which a bookmark is not a semantic match at all.
+#: Without a floor every query "matches" its nearest neighbours, however far
+#: away they are. The figure suits the default model, whose scores for
+#: unrelated English text sit around 0.3 to 0.45; it is a starting point, not a
+#: measured one, and ``PINBOARD_SEMANTIC_MIN_SIMILARITY`` overrides it. Another
+#: model has another scale, so it gets no floor unless one is set.
+DEFAULT_MIN_SIMILARITY = 0.45
 SEMANTIC_ENV_VAR = "PINBOARD_SEMANTIC"
 
 _OFF = {"false", "0", "no", "off"}
@@ -63,8 +72,15 @@ class FastEmbedEmbedder:
     lock keeps the background indexer and a query from loading it twice.
     """
 
-    def __init__(self, model_name: str = DEFAULT_MODEL):
+    def __init__(
+        self, model_name: str = DEFAULT_MODEL, min_similarity: float | None = None
+    ):
         self.model_name = model_name
+        if min_similarity is None:
+            min_similarity = (
+                DEFAULT_MIN_SIMILARITY if model_name == DEFAULT_MODEL else 0.0
+            )
+        self.min_similarity = min_similarity
         self.model_id = f"fastembed:{model_name}"
         self._model: Any = None
         self._lock = threading.Lock()
@@ -114,7 +130,18 @@ def default_embedder(
         return None
     if not fastembed_installed():
         return None
-    return FastEmbedEmbedder(env.get(MODEL_ENV_VAR, "").strip() or DEFAULT_MODEL)
+    floor: float | None = None
+    stated = env.get(MIN_SIMILARITY_ENV_VAR, "").strip()
+    if stated:
+        try:
+            floor = min(max(float(stated), -1.0), 1.0)
+        except ValueError:
+            logger.warning(
+                "%s is not a number; using the default", MIN_SIMILARITY_ENV_VAR
+            )
+    return FastEmbedEmbedder(
+        env.get(MODEL_ENV_VAR, "").strip() or DEFAULT_MODEL, min_similarity=floor
+    )
 
 
 def embed_pending(

@@ -83,6 +83,15 @@ def _stamp(moment: datetime) -> str:
     return aware.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+#: Pinboard allows ``posts/all`` once every five minutes.
+POSTS_ALL_INTERVAL = 300.0
+
+
+class PostsAllUnavailable(Exception):
+    """``posts/all`` cannot be called now: too soon after the last call, or
+    the background index sync owns it."""
+
+
 class PinboardClient:
     """Pinboard API client with caching and rate limiting."""
 
@@ -92,6 +101,14 @@ class PinboardClient:
         self.last_request_time = 0.0
         self.min_request_interval = 3.0  # 3 seconds between requests
         self._rate_lock = threading.Lock()
+
+        # posts/all is limited to one call every five minutes. A tool call
+        # cannot wait that long, so a call that comes too soon is refused and
+        # the caller answers with what it already has. While the index is
+        # syncing in the background the allowance is the sync's alone.
+        self.posts_all_enabled = True
+        self.posts_all_interval = POSTS_ALL_INTERVAL
+        self._last_posts_all: float | None = None
 
         # Initialize pinboard.py client
         self._pb = pinboard.Pinboard(token)
@@ -152,6 +169,23 @@ class PinboardClient:
             if time_since_last < self.min_request_interval:
                 time.sleep(self.min_request_interval - time_since_last)
             self.last_request_time = time.time()
+
+    def _posts_all(self, **params: Any) -> Any:
+        """Call ``posts/all`` (always filtered), or raise :class:`PostsAllUnavailable`."""
+        if not params:
+            raise ValueError("posts/all is never called without a filter")
+        with self._rate_lock:
+            if not self.posts_all_enabled:
+                raise PostsAllUnavailable("the index sync is using posts/all")
+            now = time.monotonic()
+            if (
+                self._last_posts_all is not None
+                and now - self._last_posts_all < self.posts_all_interval
+            ):
+                raise PostsAllUnavailable("posts/all was called too recently")
+            self._last_posts_all = now
+        self._rate_limit_sync()
+        return self._pb.posts.all(**params)
 
     async def _run_in_executor(self, func, *args, **kwargs) -> Any:
         """Run a synchronous function in the thread pool."""
@@ -215,14 +249,14 @@ class PinboardClient:
         """
 
         def _get_posts() -> Any:
-            self._rate_limit_sync()
             if expand_search:
                 # Get bookmarks from the last 6 months - balance between comprehensive and reasonable
                 # The LLM can intelligently select what's most relevant
                 from_date = datetime.now(timezone.utc) - timedelta(days=EXPANDED_DAYS)
-                return self._pb.posts.all(fromdt=_stamp(from_date))
+                return self._posts_all(fromdt=_stamp(from_date))
             else:
                 # Use posts.recent for initial cache - gets most recent 100 posts
+                self._rate_limit_sync()
                 return self._pb.posts.recent(count=100)
 
         result: Any = await self._run_in_executor(_get_posts)
@@ -262,14 +296,13 @@ class PinboardClient:
         """
 
         def _get_posts_by_tag() -> Any:
-            self._rate_limit_sync()
             # Use posts.all with tag filter - much more efficient
             params = {"tag": tag}
             if from_date:
                 params["fromdt"] = _stamp(from_date)
             if to_date:
                 params["todt"] = _stamp(to_date)
-            return self._pb.posts.all(**params)
+            return self._posts_all(**params)
 
         result: Any = await self._run_in_executor(_get_posts_by_tag)
 
@@ -351,6 +384,7 @@ class PinboardClient:
         # First try with recent bookmarks
         bookmarks = await self.get_all_bookmarks()
         matches = self._filter(bookmarks, terms, from_date, to_date)
+        complete = True
 
         if len(matches) < limit:
             # If the query is exactly a tag, Pinboard can return every bookmark
@@ -366,23 +400,32 @@ class PinboardClient:
                         exact_tag_match, matches, from_date, to_date, limit
                     )
                 except Exception:
-                    pass  # Fall through to expanded search if tag search fails
+                    complete = False  # fall through to the expanded search
 
             # The recent 100 did not fill the page: look through six months.
             if len(matches) < limit and not self._has_expanded_data:
-                bookmarks = await self.get_all_bookmarks(expand_if_needed=True)
-                seen = {bookmark.url for bookmark in matches}
-                matches.extend(
-                    bookmark
-                    for bookmark in self._filter(bookmarks, terms, from_date, to_date)
-                    if bookmark.url not in seen
-                )
+                try:
+                    bookmarks = await self.get_all_bookmarks(expand_if_needed=True)
+                except Exception:
+                    # Pinboard refused or it is too soon to ask again: answer
+                    # with what the recent bookmarks gave.
+                    complete = False
+                else:
+                    seen = {bookmark.url for bookmark in matches}
+                    matches.extend(
+                        bookmark
+                        for bookmark in self._filter(
+                            bookmarks, terms, from_date, to_date
+                        )
+                        if bookmark.url not in seen
+                    )
 
         matches.sort(key=_saved, reverse=True)
         matches = matches[:limit]
 
-        # Cache the result
-        self._query_cache[cache_key] = matches
+        # A partial answer is not remembered: the next ask may do better.
+        if complete:
+            self._query_cache[cache_key] = matches
         return matches
 
     async def search_bookmarks_extended(
@@ -415,6 +458,7 @@ class PinboardClient:
         )
 
         matches: list[Bookmark] = []
+        complete = True
         if exact_tag_match:
             # Use efficient tag-based search for exact matches
             try:
@@ -422,25 +466,33 @@ class PinboardClient:
                     exact_tag_match, matches, None, None, limit
                 )
             except Exception:
-                pass
+                complete = False
 
         # If no tag match or tag search failed, do extended time-based search
         if not matches:
+            cutoff = datetime.now(timezone.utc) - timedelta(days=days_back)
 
             def _get_extended_posts() -> Any:
-                self._rate_limit_sync()
-                from_date = datetime.now(timezone.utc) - timedelta(days=days_back)
-                return self._pb.posts.all(fromdt=_stamp(from_date))
+                return self._posts_all(fromdt=_stamp(cutoff))
 
-            result: Any = await self._run_in_executor(_get_extended_posts)
-            matches = self._filter(self._to_bookmarks(result), terms, None, None)
+            try:
+                result: Any = await self._run_in_executor(_get_extended_posts)
+                matches = self._filter(self._to_bookmarks(result), terms, None, None)
+                complete = True
+            except Exception:
+                # Pinboard refused or it is too soon to ask again: answer from
+                # the bookmarks already held.
+                held = await self.get_all_bookmarks()
+                matches = self._filter(held, terms, cutoff, None)
+                complete = False
 
         # Sort by most recent first
         matches.sort(key=_saved, reverse=True)
         matches = matches[:limit]
 
-        # Cache the result
-        self._query_cache[cache_key] = matches
+        # A partial answer is not remembered: the next ask may do better.
+        if complete:
+            self._query_cache[cache_key] = matches
         return matches
 
     async def get_recent_bookmarks(
@@ -466,8 +518,7 @@ class PinboardClient:
         ):
 
             def _get_window() -> Any:
-                self._rate_limit_sync()
-                return self._pb.posts.all(fromdt=_stamp(cutoff_date))
+                return self._posts_all(fromdt=_stamp(cutoff_date))
 
             try:
                 window = self._to_bookmarks(await self._run_in_executor(_get_window))

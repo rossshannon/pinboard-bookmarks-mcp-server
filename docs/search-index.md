@@ -66,10 +66,20 @@ Fifty thousand 384-dimension vectors is 77 MB and a few milliseconds to scan,
 and it avoids SQLite's loadable-extension support, which the Python that ships
 with macOS is built without.
 
+A bookmark only counts as a semantic match above a similarity floor: without
+one, every query "matches" its nearest neighbours however far away they are.
+The floor is 0.45 for the default model, which is an estimate, not a measured
+figure; `PINBOARD_SEMANTIC_MIN_SIMILARITY` changes it (0 switches it off).
+Another model has another scale, so it gets no floor unless one is set.
+
 **Hybrid** (the default when embeddings exist) runs both and fuses the two
-rankings by reciprocal rank. A bookmark containing every query word counts in
-full; a partial keyword match counts for half. Each result lists how it was
-found (`matched_by`).
+rankings by reciprocal rank. Bookmarks containing every query word always come
+first; after them come partial keyword matches (counted for half) and
+bookmarks found by meaning alone. Each result lists how it was found
+(`matched_by`). Hybrid ranks a fixed pool (the best 200 keyword matches and
+the 30 nearest by meaning), so paging with `offset` never repeats or skips a
+result; a query with more keyword matches than that is better narrowed with a
+filter or run with `mode="keyword"`, which pages without a ceiling.
 
 Search never waits for the model: while it is loading, or before anything has
 been embedded, results are keyword-only and `semantic_note` says why.
@@ -100,10 +110,13 @@ file, so a restart or the CLI honours it too. Progress is recorded after each
 window, so a sync that is interrupted resumes rather than restarts. An HTTP 429
 backs off (5, 10, 20 minutes) and then gives up until the next scheduled check.
 
-**Edits.** Editing a bookmark changes `posts/update` but no day's count, so the
-edit cannot be located. An account that fits in one window is simply re-read
-(one call). For a larger one the last 30 days are re-read, and a full pass is
-scheduled, at most once a week. `pinboard-mcp-index sync --full` forces one.
+**Edits.** Editing a bookmark changes `posts/update` but no day's count, so an
+edit cannot be located, and it can happen alongside an addition, so a changed
+count does not rule one out. Whenever anything has changed, an account of up to
+2,000 bookmarks is simply re-read (one call). A larger one re-reads its last 30
+days along with the days whose counts changed, and a full pass is scheduled, at
+most once a week, to pick up edits to older bookmarks.
+`pinboard-mcp-index sync --full` forces one.
 
 The MCP server runs this in a daemon thread: once at start, then every five
 minutes (`PINBOARD_INDEX_SYNC_INTERVAL`), then embeds anything new.

@@ -269,3 +269,71 @@ class TestTags:
 
         assert [b.url for b in everything] == ["https://dated/", "https://undated/"]
         assert [b.url for b in ranged] == ["https://dated/"]
+
+
+class TestPostsAllAllowance:
+    """Pinboard allows ``posts/all`` once every five minutes; a search never waits for it."""
+
+    def _history(self, now):
+        posts = [
+            post(
+                f"https://example.com/{n}",
+                "Filler",
+                time=_stamp(now - timedelta(hours=n)),
+            )
+            for n in range(100)
+        ]
+        posts.append(
+            post("https://old/", "Rare quokka", time=_stamp(now - timedelta(days=90)))
+        )
+        posts.append(
+            post("https://older/", "Shy numbat", time=_stamp(now - timedelta(days=95)))
+        )
+        return posts
+
+    async def test_a_second_call_too_soon_is_not_made(self, client_for, now):
+        client = client_for(self._history(now))
+        await client.search_bookmarks_extended("quokka", days_back=120)
+
+        found = await client.search_bookmarks_extended("numbat", days_back=200)
+
+        assert found == []
+        assert client._pb.posts.all.call_count == 1
+
+    async def test_a_partial_answer_is_not_remembered(self, client_for, now):
+        client = client_for(self._history(now))
+        await client.search_bookmarks_extended("quokka", days_back=120)
+        await client.search_bookmarks_extended("numbat", days_back=200)
+
+        client._last_posts_all = None  # five minutes later
+        found = await client.search_bookmarks_extended("numbat", days_back=200)
+
+        assert [b.url for b in found] == ["https://older/"]
+
+    async def test_an_error_from_pinboard_does_not_fail_the_search(
+        self, client_for, now
+    ):
+        posts = self._history(now)
+        posts.append(post("https://new/", "Quokka today", time=_stamp(now)))
+        client = client_for(posts)
+        client._pb.posts.all.side_effect = RuntimeError("429 Too Many Requests")
+
+        found = await client.search_bookmarks("quokka")
+
+        assert [b.url for b in found] == ["https://new/"]
+
+    async def test_nothing_is_called_while_the_index_sync_owns_it(
+        self, client_for, now
+    ):
+        client = client_for(self._history(now))
+        client.posts_all_enabled = False
+
+        assert await client.search_bookmarks("quokka") == []
+        assert await client.get_bookmarks_by_tags(["python"]) == []
+        client._pb.posts.all.assert_not_called()
+
+    def test_it_is_never_called_without_a_filter(self, client_for):
+        client = client_for([])
+
+        with pytest.raises(ValueError):
+            client._posts_all()

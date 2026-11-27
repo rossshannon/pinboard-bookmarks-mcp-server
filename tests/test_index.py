@@ -439,6 +439,43 @@ class TestSemantic:
         assert outcome.bookmarks[0]["matched_by"] == ["keyword", "semantic"]
         assert any(b["matched_by"] == ["semantic"] for b in outcome.bookmarks)
 
+    def test_hybrid_pages_never_repeat_or_skip(self, embedded):
+        index, embedder = embedded
+        query = "feedback tool sqlite search python"
+
+        everything = index.search(query, embedder=embedder, limit=100).bookmarks
+        paged = []
+        offset = 0
+        while True:
+            page = index.search(query, embedder=embedder, limit=3, offset=offset)
+            paged.extend(page.bookmarks)
+            offset += 3
+            if not page.has_more:
+                break
+
+        assert len(everything) > 6
+        assert [b["url"] for b in paged] == [b["url"] for b in everything]
+
+    def test_hybrid_puts_bookmarks_with_every_word_first(self, embedded):
+        index, embedder = embedded
+
+        outcome = index.search("feedback tool", embedder=embedder, limit=100)
+
+        full = [b.get("matched_terms") == "all" for b in outcome.bookmarks]
+        assert any(full) and not all(full)
+        assert full == sorted(full, reverse=True)
+
+    def test_a_similarity_floor_drops_far_neighbours(self, embedded):
+        index, embedder = embedded
+        query = "customer complaints"
+        loose = index.search(query, mode="semantic", embedder=embedder, limit=100)
+
+        embedder.min_similarity = 0.3
+        strict = index.search(query, mode="semantic", embedder=embedder, limit=100)
+
+        assert 0 < len(strict.bookmarks) < len(loose.bookmarks)
+        assert all(b["similarity"] >= 0.3 for b in strict.bookmarks)
+
     def test_filters_apply_to_semantic_results(self, embedded):
         index, embedder = embedded
 
@@ -582,6 +619,26 @@ class TestFastEmbedWrapper:
             == "x/y"
         )
         assert embeddings.default_embedder({"PINBOARD_SEMANTIC": "off"}) is None
+
+    def test_the_similarity_floor_follows_the_model_and_the_environment(
+        self, fastembed, monkeypatch
+    ):
+        from pinboard_mcp_server import embeddings
+
+        monkeypatch.setattr(embeddings, "fastembed_installed", lambda: True)
+        default = embeddings.default_embedder({})
+        other = embeddings.default_embedder({"PINBOARD_EMBEDDING_MODEL": "x/y"})
+        stated = embeddings.default_embedder(
+            {"PINBOARD_SEMANTIC_MIN_SIMILARITY": "0.6"}
+        )
+        nonsense = embeddings.default_embedder(
+            {"PINBOARD_SEMANTIC_MIN_SIMILARITY": "high"}
+        )
+
+        assert default.min_similarity == embeddings.DEFAULT_MIN_SIMILARITY
+        assert other.min_similarity == 0.0
+        assert stated.min_similarity == 0.6
+        assert nonsense.min_similarity == embeddings.DEFAULT_MIN_SIMILARITY
 
         monkeypatch.setattr(embeddings, "fastembed_installed", lambda: False)
         assert embeddings.default_embedder({}) is None

@@ -41,7 +41,7 @@ _TWEET_HOSTS = {"twitter.com", "x.com"}
 _HANDLE = r"[A-Za-z0-9_]{1,15}"
 
 _TWEET_PATH = re.compile(
-    rf"^/(?:#!/)?(?:i/web|i|(?P<handle>{_HANDLE}))/status(?:es)?/(?P<id>\d{{1,20}})(?:[/?#]|$)"
+    rf"^/(?:i/web|i|(?P<handle>{_HANDLE}))/status(?:es)?/(?P<id>\d{{1,20}})(?:[/?#]|$)"
 )
 
 #: ``Full Name (@handle): text``, the shape the Twitter backfill writes.
@@ -154,7 +154,11 @@ def snowflake_time(tweet_id: int, now: datetime | None = None) -> datetime | Non
 def _split_url(url: str) -> tuple[str, str]:
     try:
         parts = urlsplit(url.strip())
-        return parts.hostname or "", parts.path or ""
+        path = parts.path or ""
+        if parts.fragment.startswith("!/") and path in ("", "/"):
+            # 2011-era "hashbang" URLs: twitter.com/#!/user/status/1
+            path = parts.fragment[1:]
+        return parts.hostname or "", path
     except ValueError:
         return "", ""
 

@@ -160,6 +160,10 @@ class TestSearchBookmarks:
             {"query": "x", "mode": "fuzzy"},
             {"query": "x", "date_field": "published"},
             {"query": "x", "from_date": "last week"},
+            {"query": "x", "author": "@"},
+            {"query": "x", "domain": "https://"},
+            {"query": "x", "tags": [" "]},
+            {"query": "x", "source": "via:"},
         ],
     )
     async def test_bad_arguments_are_refused(self, mcp, arguments):
@@ -296,6 +300,28 @@ class TestOtherTools:
         assert result["index"]["complete"] is False
         assert "still running" in result["index"]["note"]
 
+    async def test_a_failing_first_sync_is_not_called_running(self, mcp, service):
+        service.index.set_meta("last_synced_at", None)
+        service.index.set_meta("last_error", "HTTP Error 401: Unauthorized")
+
+        note = (await call(mcp, "search_bookmarks", query="sqlite"))["index"]["note"]
+
+        assert "not succeeded" in note
+
+    async def test_a_later_sync_part_way_through_is_not_called_the_first(
+        self, mcp, service
+    ):
+        service.index.set_meta("sync_incomplete", "1")
+
+        note = (await call(mcp, "search_bookmarks", query="sqlite"))["index"]["note"]
+
+        assert "part-way" in note and "first" not in note
+
+    async def test_an_empty_filter_means_no_filter(self, mcp):
+        result = await call(mcp, "search_bookmarks", query="sqlite", author="", tags=[])
+
+        assert result["total"] >= 1
+
 
 class TestWithoutTheIndex:
     """Switched off, or empty: the tools ask Pinboard, as they did before."""
@@ -392,6 +418,8 @@ class TestConfiguration:
         service = main._open_index(token_client)
         try:
             assert service is not None
+            # The sync has posts/all to itself.
+            assert token_client.posts_all_enabled is False
             for _ in range(200):
                 if service.ready() and service.index.get_meta("last_synced_at"):
                     break

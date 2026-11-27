@@ -167,6 +167,7 @@ How it all works, and why: [docs/search-index.md](docs/search-index.md).
 - `PINBOARD_INDEX_SYNC_INTERVAL` (optional): seconds between checks for changes (default 300, minimum 60)
 - `PINBOARD_SEMANTIC` (optional): set to `off` to disable semantic search even when the extra is installed
 - `PINBOARD_EMBEDDING_MODEL` (optional): another fastembed model name
+- `PINBOARD_SEMANTIC_MIN_SIMILARITY` (optional): the cosine similarity below which a bookmark is not a semantic match (default 0.45 for the default model, 0 for any other)
 - `PINBOARD_MCP_APPS_UI` (optional): set to `false` to turn off the result cards; on by default
 
 The index file holds your private bookmarks too, so it is created readable by you alone (mode 600).
@@ -183,7 +184,7 @@ The server enforces Pinboard's limits: three seconds between API calls, and five
 
 ### Without the index
 
-With `PINBOARD_INDEX=off`, or before the first sync has fetched anything, the tools ask Pinboard directly: the most recent 100 bookmarks, widening to six months when those do not fill the page. Every word of the query must appear (in any order) in the title, notes, tags or URL. The `author`, `domain`, `tags`, `source` and `offset` arguments and `count_bookmarks` need the index. Answers are remembered for five minutes and dropped as soon as Pinboard reports a change.
+With `PINBOARD_INDEX=off`, or before the first sync has fetched anything, the tools ask Pinboard directly: the most recent 100 bookmarks, widening to six months when those do not fill the page. Every word of the query must appear (in any order) in the title, notes, tags or URL. The `author`, `domain`, `tags`, `source` and `offset` arguments and `count_bookmarks` need the index. Answers are remembered for five minutes and dropped as soon as Pinboard reports a change. Pinboard allows the wider (`posts/all`) request once every five minutes, so a search that would need a second one sooner answers from what it already has; while the index is syncing that allowance belongs to the sync, and these tools read the most recent 100 only.
 
 ## Testing
 

@@ -166,3 +166,19 @@ class TestDates:
         assert enrich.url_hash("https://example.com/") == (
             "182ccedb33a9e03fbf1079b209da1a31"
         )
+
+
+def test_a_hashbang_tweet_url_is_a_tweet():
+    """2011-era links: twitter.com/#!/user/status/<id>."""
+    derived = derive("https://twitter.com/#!/pinboard/status/1100000000000000000")
+
+    assert derived.domain == "x.com"
+    assert derived.author_handle == "pinboard"
+    assert derived.tweet_id == "1100000000000000000"
+    assert derived.source == "twitter"
+
+
+def test_a_fragment_on_an_ordinary_twitter_page_is_not_a_tweet():
+    derived = derive("https://twitter.com/about#!/pinboard/status/1100000000000000000")
+
+    assert derived.tweet_id is None

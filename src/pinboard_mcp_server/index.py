@@ -54,6 +54,15 @@ _BM25_WEIGHTS = (4.0, 2.0, 3.0, 1.0, 5.0)
 #: Reciprocal-rank-fusion constant for hybrid search.
 _RRF_K = 60
 
+#: How deep the keyword ranking is read before fusing. Fixed, so that the
+#: fused order is the same whichever page is asked for; hybrid results page
+#: through at most this many keyword matches.
+_KEYWORD_POOL = 200
+
+#: By-meaning neighbours taken into a hybrid search. Deliberately small: a
+#: nearest neighbour always exists, relevant or not.
+_SEMANTIC_POOL = 30
+
 _EMBED_TEXT_LIMIT = 2000
 
 GROUPINGS = ("day", "month", "year", "domain", "author", "tag", "source")
@@ -557,7 +566,10 @@ class BookmarkIndex:
     def replace_range(self, since: str, until: str, posts: Iterable[Post]) -> SyncDelta:
         """Make ``[since, until)`` of the index match ``posts``.
 
-        Every post is upserted, and any indexed bookmark saved inside the range
+        The range is exclusive at both ends: whether Pinboard's ``fromdt`` and
+        ``todt`` include a bookmark saved exactly on the bound is not something
+        to bet a deletion on. Every post is upserted, and any indexed bookmark
+        saved inside the range
         that is not among them is removed: it was deleted (or re-dated) on
         Pinboard. ``posts`` may spill outside the range; those are upserted and
         nothing outside the range is removed.
@@ -569,7 +581,7 @@ class BookmarkIndex:
             stale = [
                 row["id"]
                 for row in db.execute(
-                    "SELECT id, url FROM bookmarks WHERE saved_at >= ? AND saved_at < ?",
+                    "SELECT id, url FROM bookmarks WHERE saved_at > ? AND saved_at < ?",
                     (since, until),
                 )
                 if row["url"] not in keep
@@ -812,6 +824,7 @@ class BookmarkIndex:
             return self.listing(filters, limit, offset)
 
         want = offset + limit + 1
+        semantic_only = mode == "semantic"
         note: str | None = None
         semantic: list[tuple[int, float]] = []
         if mode != "keyword":
@@ -822,7 +835,10 @@ class BookmarkIndex:
             else:
                 try:
                     semantic = self._semantic_ids(
-                        query, filters, max(want, 50), embedder
+                        query,
+                        filters,
+                        want if semantic_only else _SEMANTIC_POOL,
+                        embedder,
                     )
                     if not semantic and not self._has_embeddings(embedder.model_id):
                         note = "no bookmarks have been embedded yet"
@@ -845,7 +861,11 @@ class BookmarkIndex:
                 has_more=len(semantic) > offset + limit,
             )
 
-        keyword = self._keyword_ids(query, filters, max(want, 50))
+        # In hybrid the pools are a fixed size, whatever the offset: a pool that
+        # grew with the page would reorder the fused list between pages.
+        keyword = self._keyword_ids(
+            query, filters, _KEYWORD_POOL if semantic else max(want, 50)
+        )
         if not semantic:
             page_ids = keyword[offset : offset + limit]
             rows = self._rows_by_id([i for i, _ in page_ids])
@@ -880,7 +900,9 @@ class BookmarkIndex:
             scores[bookmark_id] = scores.get(bookmark_id, 0.0) + 1.0 / (
                 _RRF_K + rank + 1
             )
-        fused = sorted(scores, key=lambda i: (-scores[i], -i))
+        # Bookmarks containing every query word always come first; the fused
+        # score orders within that group and within the rest.
+        fused = sorted(scores, key=lambda i: (kinds.get(i) != "all", -scores[i], -i))
         page_fused = fused[offset : offset + limit]
         rows = self._rows_by_id(page_fused)
         bookmarks = []
@@ -1072,8 +1094,8 @@ class BookmarkIndex:
         if vector.shape[0] != matrix.shape[1]:
             return []
         scores = matrix @ vector
-        if not filters.is_empty():
-            clauses, params = self._where(filters)
+        clauses, params = self._where(filters)
+        if clauses:
             allowed = np.fromiter(
                 (
                     row[0]

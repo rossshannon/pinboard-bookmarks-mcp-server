@@ -187,19 +187,26 @@ class TestIncrementalSync:
         assert report.up_to_date
         assert [name for name, _ in account.calls] == ["update"]
 
-    def test_a_new_bookmark_is_fetched_with_its_day_only(self, synced, account, index):
+    def test_a_new_bookmark_is_found_in_one_call(self, synced, account, index):
         account.add(post("https://new/", "Brand new", time="2026-11-27T09:00:00Z"))
 
         report = synced.sync()
 
         assert report.delta.added == 1
         assert index.get("https://new/")["title"] == "Brand new"
-        _, params = account.calls[-1]
-        assert params == {
-            "fromdt": "2026-11-26T00:00:00Z",
-            "todt": "2026-11-29T00:00:00Z",
-            "meta": True,
-        }
+        assert account.count("all") == 1
+
+    def test_an_edit_made_alongside_an_addition_is_not_missed(
+        self, synced, account, index
+    ):
+        """The day counts change, but only for the addition's day."""
+        account.add(post("https://new/", "Brand new", time="2026-11-27T09:00:00Z"))
+        account.edit("https://pinboard.in/howto/", description="Renamed")
+
+        synced.sync()
+
+        assert index.get("https://new/") is not None
+        assert index.get("https://pinboard.in/howto/")["title"] == "Renamed"
 
     def test_a_backdated_save_is_found(self, synced, account, index):
         """A Twitter backfill saves old likes under their original dates."""
@@ -294,6 +301,27 @@ class TestEditsInALargeAccount:
 
         assert index.get("https://sqlite.org/fts5.html")["title"] == "Recent edit"
         assert account.count("all") == 1
+
+    def test_a_recent_edit_alongside_an_old_addition_is_caught(
+        self, synced, account, index
+    ):
+        account.add(post("https://old/", "Backdated", time="2012-05-05T09:00:00Z"))
+        account.edit("https://sqlite.org/fts5.html", description="Recent edit")
+
+        synced.sync()
+
+        assert index.get("https://old/") is not None
+        assert index.get("https://sqlite.org/fts5.html")["title"] == "Recent edit"
+        assert index.get_meta("needs_full_sync") == "1"
+
+    def test_a_new_bookmark_re_reads_only_recent_days(self, synced, account, index):
+        account.add(post("https://new/", "Brand new", time="2026-11-27T09:00:00Z"))
+
+        synced.sync()
+
+        assert index.get("https://new/") is not None
+        fetched = [params["fromdt"] for name, params in account.calls if name == "all"]
+        assert fetched and min(fetched) >= "2026-10-26T00:00:00Z"
 
     def test_an_old_edit_waits_for_the_weekly_full_pass(
         self, synced, account, index, clock

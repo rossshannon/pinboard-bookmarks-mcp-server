@@ -63,6 +63,10 @@ MAX_WINDOW = 10_000
 #: How many recent days are re-read when an edit cannot be located.
 EDIT_REFRESH_DAYS = 30
 
+#: An account this small is re-read whole (one ``posts/all`` call) whenever
+#: anything changes, which catches every edit at once.
+FULL_REFRESH_LIMIT = 2_000
+
 #: The least time between automatic full passes.
 FULL_RESYNC_INTERVAL = timedelta(days=7)
 
@@ -174,6 +178,7 @@ class PinboardSync:
         clock: Callable[[], datetime] | None = None,
         posts_all_interval: float = POSTS_ALL_INTERVAL,
         max_window: int = MAX_WINDOW,
+        full_refresh_limit: int = FULL_REFRESH_LIMIT,
         wait_for_windows: bool = True,
     ):
         """
@@ -187,6 +192,8 @@ class PinboardSync:
             clock: the current UTC time; a seam for tests.
             posts_all_interval: seconds between ``posts/all`` calls.
             max_window: the most bookmarks to plan into one window.
+            full_refresh_limit: accounts with at most this many bookmarks are
+                re-read whole on any change.
             wait_for_windows: ``False`` stops after the windows that can be
                 fetched now rather than waiting out the ``posts/all`` interval.
         """
@@ -198,6 +205,7 @@ class PinboardSync:
         self._clock = clock or (lambda: datetime.now(timezone.utc))
         self.posts_all_interval = posts_all_interval
         self.max_window = max_window
+        self.full_refresh_limit = min(full_refresh_limit, max_window)
         self.wait_for_windows = wait_for_windows
         self._lock = threading.Lock()
 
@@ -327,9 +335,19 @@ class PinboardSync:
             }
 
         changed = differing(recorded)
-        if not changed and update_time != index.get_meta("last_update_time"):
-            # Something was edited in place. Where is unknowable from counts.
-            if report.remote_total <= self.max_window:
+        previous_update = index.get_meta("last_update_time")
+        if (
+            previous_update is not None
+            and update_time != previous_update
+            and index.get_meta("full_sync_pending") != "1"
+        ):
+            # Something changed since the last sync. Day counts show what was
+            # added or deleted, but not what was edited in place (retagged,
+            # retitled), and an edit can sit alongside an addition, so a
+            # changed count does not rule one out. A small account is simply
+            # re-read. A large one re-reads its recent days, where most edits
+            # happen, and leaves older edits to the weekly full pass.
+            if report.remote_total <= self.full_refresh_limit:
                 self._begin_full_pass()
                 recorded = {}
                 changed = differing(recorded)
@@ -337,7 +355,7 @@ class PinboardSync:
                 cutoff = (
                     self._clock().date() - timedelta(days=EDIT_REFRESH_DAYS)
                 ).isoformat()
-                changed = {day for day in remote if day >= cutoff}
+                changed |= {day for day in remote if day >= cutoff}
                 index.set_meta("needs_full_sync", "1")
 
         # A full pass re-reads every day Pinboard has (nothing is recorded, so

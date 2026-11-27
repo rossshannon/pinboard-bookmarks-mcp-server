@@ -552,6 +552,67 @@
       "to_date": null
     }
   },
+  "indexed": {
+    "structuredContent": {
+      "bookmarks": [
+        {
+          "id": "f783f8b2959a4dd3713d7f745004c9e9",
+          "url": "https://x.com/patrickc/status/2123451231237046272",
+          "title": "Patrick Collison (@patrickc): We built a small internal tool that routes every piece of user feedback to the engineer who owns that surface. Response times fell by half.",
+          "tags": [
+            "via:twitter-like"
+          ],
+          "notes": "We built a small internal tool that routes every piece of user feedback to the engineer who owns that surface. Response times fell by half.",
+          "saved_at": "2026-11-20T08:05:11Z",
+          "private": true,
+          "to_read": false,
+          "domain": "x.com",
+          "source": "twitter-like",
+          "author_handle": "patrickc",
+          "author_name": "Patrick Collison",
+          "posted_at": "2026-11-19T16:20:00Z",
+          "matched_by": [
+            "keyword",
+            "semantic"
+          ],
+          "matched_terms": "all",
+          "similarity": 0.7312
+        },
+        {
+          "id": "0c1d7a3b5e9f4a6288b1c2d3e4f5a6b7",
+          "url": "https://www.intercom.com/blog/customer-feedback-strategy/",
+          "title": "A customer feedback strategy that scales",
+          "tags": [
+            "product",
+            "feedback"
+          ],
+          "notes": "",
+          "saved_at": "2026-09-14T10:02:44Z",
+          "private": false,
+          "to_read": true,
+          "domain": "intercom.com",
+          "source": "bookmark",
+          "matched_by": [
+            "semantic"
+          ],
+          "similarity": 0.5821
+        }
+      ],
+      "total": 2,
+      "query": "feedback tool",
+      "filters": {
+        "from": "2026-09-01T00:00:00Z",
+        "date_field": "saved"
+      },
+      "has_more": false,
+      "search_mode": "hybrid",
+      "index": {
+        "bookmarks": 23,
+        "last_synced_at": "2026-11-27T12:00:00Z",
+        "complete": true
+      }
+    }
+  },
   "empty": {
     "structuredContent": {
       "bookmarks": [],

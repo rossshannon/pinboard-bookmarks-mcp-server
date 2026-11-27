@@ -355,6 +355,10 @@ def _open_index(token_client: PinboardClient) -> IndexService | None:
             file=sys.stderr,
         )
         return None
+    # posts/all is allowed once every five minutes. The sync needs that
+    # allowance; the live fallback (used until the index has data) keeps to
+    # posts/recent meanwhile.
+    token_client.posts_all_enabled = False
     service.start()
     return service
 

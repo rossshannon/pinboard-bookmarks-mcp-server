@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -119,7 +120,17 @@ class IndexService:
             "last_synced_at": status["last_synced_at"],
             "complete": status["complete"],
         }
-        if not status["complete"]:
+        if status["last_synced_at"] and status["sync_in_progress"]:
+            brief["note"] = (
+                "A sync from Pinboard is part-way through; some bookmarks may be "
+                "missing from these results or out of date."
+            )
+        elif not status["last_synced_at"] and status["last_error"]:
+            brief["note"] = (
+                "The first sync from Pinboard has not succeeded yet (see "
+                "last_error); bookmarks may be missing from these results."
+            )
+        elif not status["last_synced_at"]:
             brief["note"] = (
                 "The first sync from Pinboard is still running, newest bookmarks "
                 "first; older ones may be missing from these results."
@@ -155,14 +166,29 @@ class IndexService:
     ) -> Filters:
         if date_field not in DATE_FIELDS:
             raise ValueError("date_field must be 'saved' or 'posted'")
+        # An empty value means "no filter". A value that says something but
+        # comes to nothing once read ("@", "https://") is a mistake, and
+        # dropping it silently would answer a different question.
+        cleaned = tuple(tag.strip() for tag in tags or [] if tag and tag.strip())
+        if tags and not cleaned:
+            raise ValueError("tags holds no tag: every entry is blank")
+        author = (author or "").strip() or None
+        if author and not re.search(r"\w", author):
+            raise ValueError("author must be a name or a handle, such as 'patrickc'")
+        domain = (domain or "").strip() or None
+        if domain and not enrich.normalise_domain(domain):
+            raise ValueError("domain must be a hostname, such as 'github.com'")
+        source = (source or "").strip() or None
+        if source and source.lower() in {"via:", "via"}:
+            raise ValueError("source must name a source, such as 'twitter-like'")
         return Filters(
             since=parse_bound(from_date, "from_date"),
             until=parse_bound(to_date, "to_date", end=True),
             date_field=date_field,
-            tags=tuple(tag.strip() for tag in tags or [] if tag and tag.strip()),
-            author=(author or "").strip() or None,
-            domain=(domain or "").strip() or None,
-            source=(source or "").strip() or None,
+            tags=cleaned,
+            author=author,
+            domain=domain,
+            source=source,
             to_read=to_read,
         )
 
