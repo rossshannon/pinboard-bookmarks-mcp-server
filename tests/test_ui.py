@@ -29,6 +29,12 @@ BOOKMARK_TOOLS = (
     "list_bookmarks_by_tags",
 )
 
+#: Tools whose results are counts or status, which neither card draws.
+CARDLESS_TOOLS = ("count_bookmarks", "get_index_status")
+
+#: Fixture scenarios shaped like a result from the local index, not the live fallback.
+INDEX_SCENARIOS = ("indexed",)
+
 
 @pytest.fixture
 async def mcp_client(mock_client):
@@ -104,8 +110,16 @@ class TestToolBindings:
         uris = {str(resource.uri) for resource in await mcp_client.list_resources()}
 
         for tool in await mcp_client.list_tools():
+            if tool.name in CARDLESS_TOOLS:
+                continue
             assert tool.meta is not None
             assert tool.meta["ui"]["resourceUri"] in uris
+
+    async def test_tools_with_no_fitting_card_point_at_none(self, mcp_client):
+        tools = {tool.name: tool for tool in await mcp_client.list_tools()}
+
+        for name in CARDLESS_TOOLS:
+            assert "ui" not in (tools[name].meta or {})
 
 
 class TestCardResources:
@@ -259,7 +273,7 @@ asyncio.run(go())
         )
         report = json.loads(completed.stdout.strip().splitlines()[-1])
 
-        assert report == {"metas": [None] * 5, "resources": [], "templates": []}
+        assert report == {"metas": [None] * 7, "resources": [], "templates": []}
 
 
 class TestFixtureContract:
@@ -292,7 +306,7 @@ class TestFixtureContract:
         real_bookmark_keys = set(outputs["search_bookmarks"]["bookmarks"][0])
 
         for scenario, result in _fixtures("bookmarks").items():
-            if result.get("isError"):
+            if result.get("isError") or scenario in INDEX_SCENARIOS:
                 continue
             content = result["structuredContent"]
             assert frozenset(content) in real_shapes, scenario
@@ -310,11 +324,52 @@ class TestFixtureContract:
         )
 
         for scenario, result in _fixtures("bookmarks").items():
-            if result.get("isError"):
+            if result.get("isError") or scenario in INDEX_SCENARIOS:
                 continue
             content = result["structuredContent"]
             _assert_types_within(content, top_level, scenario)
             for bookmark in content["bookmarks"]:
+                _assert_types_within(bookmark, rows, scenario)
+
+    async def test_index_fixtures_have_the_index_s_shape(
+        self, mcp_client, tmp_path, monkeypatch
+    ):
+        """With the local index answering, results carry more than the live
+        fallback's: derived fields on each row, and how the search was run."""
+        from pinboard_mcp_server.embeddings import embed_pending
+        from pinboard_mcp_server.index import BookmarkIndex
+        from pinboard_mcp_server.service import IndexService
+        from pinboard_mcp_server.sync import import_export
+
+        from .fakes import EXPORT, FakeEmbedder
+
+        index = BookmarkIndex(tmp_path / "index.sqlite3")
+        import_export(index, EXPORT)
+        index.set_meta("last_synced_at", "2026-11-27T12:00:00Z")
+        service = IndexService(index, embedder=FakeEmbedder())
+        embed_pending(index, service.embedder)
+        monkeypatch.setattr(main, "index_service", service)
+
+        outputs = []
+        for arguments in (
+            {"query": "feedback tool", "from_date": "2020-01-01"},
+            {"query": "customer complaints", "limit": 50},
+            {"query": "", "author": "patrickc"},
+        ):
+            result = await mcp_client.call_tool("search_bookmarks", arguments)
+            outputs.append(result.structured_content)
+        top_level = _types_by_key(outputs)
+        rows = _types_by_key([row for out in outputs for row in out["bookmarks"]])
+        always = set.intersection(
+            *(set(row) for out in outputs for row in out["bookmarks"])
+        )
+
+        fixtures = _fixtures("bookmarks")
+        for scenario in INDEX_SCENARIOS:
+            content = fixtures[scenario]["structuredContent"]
+            _assert_types_within(content, top_level, scenario)
+            for bookmark in content["bookmarks"]:
+                assert always <= set(bookmark), scenario
                 _assert_types_within(bookmark, rows, scenario)
 
     async def test_tag_fixtures_have_list_tags_shape(self, mcp_client):

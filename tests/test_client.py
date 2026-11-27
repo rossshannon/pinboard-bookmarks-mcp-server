@@ -1,6 +1,6 @@
 """Tests for the Pinboard client."""
 
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, Mock, call, patch
 
 import pytest
 
@@ -102,7 +102,11 @@ class TestPinboardClient:
                 or any("python" in tag.lower() for tag in b.tags)
                 for b in results
             )
-            mock_get_all.assert_called_once()
+            # The recent bookmarks did not fill the page, so the search widened.
+            assert mock_get_all.call_args_list == [
+                call(),
+                call(expand_if_needed=True),
+            ]
 
     @pytest.mark.asyncio
     @patch("pinboard_mcp_server.client.pinboard.Pinboard")

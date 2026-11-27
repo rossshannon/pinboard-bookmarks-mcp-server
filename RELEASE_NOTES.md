@@ -1,5 +1,33 @@
 # Release Notes
 
+## v1.2.0 - Local search index
+
+The server now mirrors the Pinboard account into a local SQLite index and answers from it. See [docs/search-index.md](docs/search-index.md).
+
+**New**
+- Full-text search over the whole account: words in any order, stemming, BM25 ranking, across titles, notes, tags, URLs and tweet authors.
+- Filters on `search_bookmarks`: `from_date`, `to_date`, `date_field` (saved or posted), `author`, `domain`, `tags`, `source`, plus `mode` and `offset`.
+- Optional semantic search (`pip install "pinboard-bookmarks-mcp-server[semantic]"`): a local embedding model, fused with keyword results.
+- Tweets saved to Pinboard are understood: author handle and name, source (`via:twitter-like`, `via:twitter-bookmark`) and the date the tweet was posted.
+- New tools: `count_bookmarks` (counts by month, site, author, tag or source) and `get_index_status`.
+- New command: `pinboard-mcp-index` (`sync`, `import`, `status`, `search`, `embed`).
+- Background sync that finds changes anywhere in the account's history, including backdated imports, and honours Pinboard's five-minute `posts/all` limit.
+
+**Fixed** (also when the index is switched off)
+- Search matches each word separately and looks at URLs, instead of needing the whole query as one phrase in the title, notes or tags.
+- Search widens beyond the most recent 100 bookmarks whenever those do not fill the page, not only when they match nothing.
+- `list_recent_bookmarks` is no longer capped at the most recent 100 bookmarks.
+- Searching for two or three tags reaches back through the whole account.
+- Remembered answers are dropped when Pinboard changes, and expire after five minutes.
+- A bookmark's `id` is stable (Pinboard's hash of the URL) instead of random on every fetch.
+- A bookmark with no timestamp has no date, instead of 1 January 2024.
+- `private` and `to_read` are returned.
+
+**Changed**
+- `list_recent_bookmarks` accepts up to 365 days and 200 results.
+- `saved_at` may be `null`.
+- Set `PINBOARD_INDEX=off` to keep the old ask-Pinboard-directly behaviour.
+
 ## v1.0.0 - Initial Release
 
 ### 🎉 **First Stable Release**

@@ -3,21 +3,22 @@
 [![CI](https://github.com/rossshannon/pinboard-bookmarks-mcp-server/actions/workflows/ci.yml/badge.svg)](https://github.com/rossshannon/pinboard-bookmarks-mcp-server/actions/workflows/ci.yml)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 
-Read-only access to Pinboard.in bookmarks for LLMs via Model Context Protocol (MCP).
+Search your Pinboard.in bookmarks from an LLM via Model Context Protocol (MCP): full-text and semantic search over the whole account, from a local index.
 
 ## Overview
 
-This server provides LLMs with the ability to search, filter, and retrieve bookmark metadata from Pinboard.in at inference time. Built on FastMCP, it offers five tools for bookmark interaction while respecting Pinboard's rate limits and implementing intelligent caching.
+Pinboard stays the place you save to. This server mirrors the account into one SQLite file on your machine and answers every question from there, so an LLM can ask "what was that Patrick Collison tweet last week about building a feedback tool?" and get an answer in milliseconds instead of paging through Pinboard's API. It never writes to Pinboard.
 
 ## Features
 
-- **Read-only access** to Pinboard bookmarks
-- **Five MCP tools**: `search_bookmarks`, `search_bookmarks_extended`, `list_recent_bookmarks`, `list_bookmarks_by_tags`, `list_tags`
-- **Smart caching** with LRU cache and automatic invalidation using `posts/update` endpoint
-- **Rate limiting** respects Pinboard's 3-second guideline between API calls
-- **Field mapping** converts Pinboard's legacy field names to intuitive ones (description→title, extended→notes)
+- **A local search index** ([docs/search-index.md](docs/search-index.md)): SQLite with FTS5, kept in step with Pinboard in the background. Words in any order, stemming, BM25 ranking, across titles, notes, tags, URLs and tweet authors
+- **Filters on every search**: date range (saved or posted), tweet author, site, tags, and source (liked tweet, bookmarked tweet, hand-saved bookmark)
+- **Semantic search** (optional extra): a local embedding model finds bookmarks by meaning, fused with keyword results
+- **Tweets understood**: author handle and name, and the date a tweet was posted, are read from the bookmark's URL and title
+- **Seven MCP tools**: `search_bookmarks`, `list_recent_bookmarks`, `list_bookmarks_by_tags`, `list_tags`, `count_bookmarks`, `get_index_status`, and `search_bookmarks_extended` for compatibility
+- **Polite to Pinboard**: one cheap call to notice a change, date-bounded `posts/all` calls to fetch it, the documented rate limits honoured
 - **Result cards** for MCP Apps hosts: bookmarks and tags render as interactive cards in Claude, ChatGPT and other hosts that support [MCP Apps](https://modelcontextprotocol.io/docs/extensions/apps); other hosts see plain results as before
-- **Comprehensive testing** with integration test harnesses and CI validation
+- **Read-only access** to Pinboard, with field names mapped to intuitive ones (description→title, extended→notes)
 
 ## Installation
 
@@ -72,70 +73,104 @@ Add this configuration to your Claude Desktop settings:
 ## Available Tools
 
 ### 1. `search_bookmarks`
-Search bookmarks by query string across titles, notes, and tags. Recent-focused with automatic expansion.
+The main tool: search everything in the account, with filters. Results that contain every word rank first, then partial matches and (with the semantic extra) matches by meaning.
+
+**Parameters** (all optional):
+- `query` (string): words in any order; `"double quotes"` for an exact phrase. Empty lists everything matching the filters, newest first
+- `limit` (int): maximum results (default 20, max 100); `offset` (int) pages through more when `has_more` is true
+- `from_date`, `to_date` (string): ISO dates (`YYYY-MM-DD`) or datetimes, UTC. A bare `to_date` includes that whole day
+- `date_field`: `saved` (default) or `posted` (when a tweet was written)
+- `author` (string): tweet author by handle or name (`patrickc`, `@patrickc`, `Patrick Collison`)
+- `domain` (string): site, subdomains included; `x.com` and `twitter.com` are the same
+- `tags` (array): only bookmarks carrying all of these
+- `source` (string): `twitter-like`, `twitter-bookmark`, `twitter` (any tweet) or `bookmark`
+- `mode`: `auto` (default), `keyword`, `semantic` or `hybrid`
+
+Each result carries `id` (stable: Pinboard's hash of the URL), `url`, `title`, `notes`, `tags`, `saved_at`, `private`, `to_read`, `domain` and `source`, plus `author_handle`, `author_name` and `posted_at` for tweets.
+
+**Examples:**
+```
+What was that Patrick Collison tweet last week about building a feedback tool?
+  → search_bookmarks(query="feedback tool", author="patrickc", from_date="2026-11-19")
+What did I bookmark on X about SQLite this year?
+  → search_bookmarks(query="sqlite", source="twitter-bookmark", from_date="2026-01-01")
+```
+
+### 2. `list_recent_bookmarks`
+Everything saved in the last N days, newest first.
 
 **Parameters:**
-- `query` (string): Search query
-- `limit` (int, optional): Maximum results (default: 20, max: 100)
+- `days` (int, optional): days to look back (default 7, max 365)
+- `limit` (int, optional): maximum results (default 20, max 200)
 
-**Example:**
-```
-Search for "python testing" bookmarks
-```
-
-### 2. `search_bookmarks_extended`
-Extended search for comprehensive historical results across titles, notes, and tags.
+### 3. `list_bookmarks_by_tags`
+Bookmarks carrying all of the given tags, however old, with an optional date range.
 
 **Parameters:**
-- `query` (string): Search query
-- `days_back` (int, optional): How many days back to search (default: 365, max: 730)
-- `limit` (int, optional): Maximum results (default: 100, max: 200)
+- `tags` (array): 1-3 tags
+- `from_date`, `to_date` (string, optional): ISO dates
+- `limit` (int, optional): maximum results (default 100, max 200)
 
-**Example:**
-```
-Search the last 2 years for "kubernetes" bookmarks
-```
+### 4. `list_tags`
+All tags with their usage counts.
 
-### 3. `list_recent_bookmarks`
-List bookmarks saved in the last N days.
+### 5. `count_bookmarks`
+Counts in groups, with the same filters as `search_bookmarks`: "whose tweets do I like most?", "what was I reading about in March?".
 
 **Parameters:**
-- `days` (int, optional): Days to look back (default: 7, max: 30)
-- `limit` (int, optional): Maximum results (default: 20, max: 100)
+- `group_by`: `day`, `month`, `year`, `domain`, `author`, `tag` or `source`
+- `query`, `from_date`, `to_date`, `date_field`, `author`, `domain`, `tags`, `source`: as for `search_bookmarks`
+- `limit` (int, optional): maximum groups (default 50, max 500)
 
-**Example:**
-```
-Show me bookmarks from the last 3 days
+### 6. `get_index_status`
+How many bookmarks the index holds, when it last synced, whether a sync is running and whether semantic search is available. `refresh=true` asks for a sync now.
+
+### 7. `search_bookmarks_extended`
+Kept for compatibility: `search_bookmarks` limited to the last `days_back` days (default 365, max 730), up to 200 results.
+
+## The search index
+
+The first time the server starts it reads the whole account from Pinboard into a SQLite file, newest bookmarks first, and from then on checks for changes every five minutes. Nothing needs setting up. A sync costs one cheap API call when nothing has changed.
+
+For a large account the first sync takes a while, because Pinboard allows one `posts/all` call every five minutes and the account is read in windows of up to 10,000 bookmarks. To skip the wait, seed the index from an export file:
+
+```bash
+# Download https://pinboard.in/export/format:json/ in your browser, then:
+pinboard-mcp-index import ~/Downloads/pinboard_export.json
 ```
 
-### 4. `list_bookmarks_by_tags`
-List ALL bookmarks filtered by tags with optional date range. Most efficient for historical access.
+The `pinboard-mcp-index` command also runs a sync by hand, shows status and searches from a terminal:
 
-**Parameters:**
-- `tags` (array): List of tags to filter by (1-3 tags)
-- `from_date` (string, optional): Start date in ISO format (YYYY-MM-DD)
-- `to_date` (string, optional): End date in ISO format (YYYY-MM-DD)
-- `limit` (int, optional): Maximum results (default: 100, max: 200)
-
-**Example:**
-```
-Find bookmarks tagged with "python" and "api" from January 2024
+```bash
+pinboard-mcp-index status
+pinboard-mcp-index sync              # needs PINBOARD_TOKEN
+pinboard-mcp-index search feedback tool --author patrickc --from 2026-11-19
 ```
 
-### 5. `list_tags`
-List all tags with their usage counts.
+### Semantic search (optional)
 
-**Example:**
+```bash
+pip install "pinboard-bookmarks-mcp-server[semantic]"
 ```
-What are my most used tags?
-```
+
+This adds a small embedding model that runs on your machine ([fastembed](https://github.com/qdrant/fastembed), `BAAI/bge-small-en-v1.5`, about 70 MB, downloaded once from Hugging Face). Bookmarks are embedded in the background after each sync, and `search_bookmarks` then combines keyword and by-meaning results. Nothing is sent anywhere.
+
+How it all works, and why: [docs/search-index.md](docs/search-index.md).
 
 ## Configuration
 
 ### Environment Variables
 
 - `PINBOARD_TOKEN` (required): Your Pinboard API token in format `username:token`
+- `PINBOARD_INDEX` (optional): set to `off` to disable the local index; the tools then ask Pinboard directly and cover recent bookmarks only
+- `PINBOARD_INDEX_PATH` (optional): where the index file lives. Default: `~/Library/Application Support/pinboard-mcp-server/bookmarks.sqlite3` on macOS, `$XDG_DATA_HOME/pinboard-mcp-server/` (or `~/.local/share/…`) on Linux, `%LOCALAPPDATA%` on Windows
+- `PINBOARD_INDEX_SYNC_INTERVAL` (optional): seconds between checks for changes (default 300, minimum 60)
+- `PINBOARD_SEMANTIC` (optional): set to `off` to disable semantic search even when the extra is installed
+- `PINBOARD_EMBEDDING_MODEL` (optional): another fastembed model name
+- `PINBOARD_SEMANTIC_MIN_SIMILARITY` (optional): the cosine similarity below which a bookmark is not a semantic match (default 0.45 for the default model, 0 for any other)
 - `PINBOARD_MCP_APPS_UI` (optional): set to `false` to turn off the result cards; on by default
+
+The index file holds your private bookmarks too, so it is created readable by you alone (mode 600).
 
 ### Result cards (MCP Apps)
 
@@ -145,14 +180,11 @@ The cards are React, built into self-contained HTML under `src/pinboard_mcp_serv
 
 ### Rate Limiting
 
-The server automatically enforces a 3-second delay between Pinboard API calls to respect their guidelines. Cached responses are returned immediately.
+The server enforces Pinboard's limits: three seconds between API calls, and five minutes between `posts/all` calls. Searches never wait on either, because they run against the local index.
 
-### Caching Strategy
+### Without the index
 
-- **Query cache**: LRU cache with 1000 entries for search results
-- **Bookmark cache**: Full bookmark list cached for 1 hour
-- **Cache invalidation**: Uses `posts/update` endpoint to detect changes
-- **Tag cache**: Tag list cached until manually refreshed
+With `PINBOARD_INDEX=off`, or before the first sync has fetched anything, the tools ask Pinboard directly: the most recent 100 bookmarks, widening to six months when those do not fill the page. Every word of the query must appear (in any order) in the title, notes, tags or URL. The `author`, `domain`, `tags`, `source` and `offset` arguments and `count_bookmarks` need the index. Answers are remembered for five minutes and dropped as soon as Pinboard reports a change. Pinboard allows the wider (`posts/all`) request once every five minutes, so a search that would need a second one sooner answers from what it already has and says so in a `note` (an incomplete answer is not remembered). While the index's first sync is under way that allowance belongs to the sync, and these results carry the index's status.
 
 ## Testing
 

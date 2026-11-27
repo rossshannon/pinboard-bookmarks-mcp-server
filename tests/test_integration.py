@@ -111,6 +111,7 @@ class TestPinboardClientIntegration(unittest.TestCase):
             mock_bookmarks = self.create_mock_pinboard_bookmarks(self.sample_posts_data)
             mock_pb = MagicMock()
             mock_pb.posts.recent.return_value = {"posts": mock_bookmarks}
+            mock_pb.posts.all.return_value = mock_bookmarks
             mock_pb.posts.update.return_value = {"update_time": "2024-01-15T12:00:00Z"}
             mock_pinboard_class.return_value = mock_pb
 

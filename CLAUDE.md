@@ -12,8 +12,8 @@ Based on the PRD (docs/pinboard_mcp_server_prd.md), the system follows this desi
 
 - **FastMCP 2.0** provides the MCP scaffolding with Tool abstraction, async FastAPI server, and JSON-Schema validation
 - **pinboard.py** wrapper simplifies Pinboard API calls and error handling
-- **Read-only** design with four main tools: `searchBookmarks`, `listRecentBookmarks`, `listBookmarksByTags`, `listTags`
-- **In-memory caching** using LRU cache (1000 query results) with `posts/update` polling for cache invalidation
+- **Read-only** design. Tools: `search_bookmarks`, `list_recent_bookmarks`, `list_bookmarks_by_tags`, `list_tags`, `count_bookmarks`, `get_index_status`, and `search_bookmarks_extended` (compatibility)
+- **Local SQLite index** (FTS5 plus optional embeddings) synced from Pinboard in the background; see "Local search index" below. The in-memory caches in `client.py` serve only the live fallback
 - **Rate limiting** respects Pinboard's 3-second guideline between requests
 
 ## Key Implementation Details
@@ -27,7 +27,7 @@ Based on the PRD (docs/pinboard_mcp_server_prd.md), the system follows this desi
 
 - FastMCP 2.0, FastAPI, Uvicorn/Gunicorn
 - pinboard.py ≥ 2.0.0
-- Poetry for dependency management
+- uv for the lock file (`uv.lock`)
 - pytest, pytest-asyncio, responses, vcr.py for testing
 - ruff, mypy for linting and type checking
 - Optional: redis-lite for cache backend, OpenTelemetry for observability
@@ -39,7 +39,7 @@ Based on the PRD (docs/pinboard_mcp_server_prd.md), the system follows this desi
 - Load testing with k6 targeting 30 RPS
 - Never log Pinboard API tokens for security
 - All dates returned in ISO-8601 Zulu format
-- When introducing or upgrading dependencies, update the `pyproject.toml` file with the new version and run `poetry update` to update the lock file. Do a search online for appropriate version numbers rather than relying on your memory.
+- When introducing or upgrading dependencies, update the `pyproject.toml` file with the new version and run `uv lock` to update the lock file. Do a search online for appropriate version numbers rather than relying on your memory.
 - **Test Coverage Requirements**: The CI pipeline requires 75% test coverage to pass. Current coverage exceeds requirements with comprehensive testing of search methods, error handling, and edge cases.
 
 ## MCP Apps result cards
@@ -48,8 +48,20 @@ Tools link to `ui://pinboard/<card>@<hash>` cards (see docs/mcp-apps-ui.md). The
 
 - After changing anything in `cards/src/`, run `npm run build` in `cards/` and commit the regenerated HTML: CI's `npm run check` byte-compares it against a fresh build
 - When a tool's return shape changes, update `cards/fixtures/*.json` too; `tests/test_ui.py` fails when they drift
-- New tools get `meta=ui.tool_meta(<card>)` on their `@mcp.tool` decorator
+- New tools get `meta=ui.tool_meta(<card>)` on their `@mcp.tool` decorator when a card draws their result; list the others in `CARDLESS_TOOLS` in `tests/test_ui.py`
 - Check a visual change with `npm run capture` (screenshots in `cards/tmp/captures/`) and `npm run test:browser`
+
+## Local search index
+
+The tools answer from a local SQLite index, not from Pinboard (see docs/search-index.md). Pinboard is only called by `sync.py`, and by the live fallback in `client.py` when the index is off or empty.
+
+- `enrich.py` derives domain, source, tweet author and posted date from a bookmark's own fields. After changing it (or `embedding_text` in `index.py`), bump `DERIVED_VERSION` in `index.py` so existing indexes re-derive on open
+- A schema change needs a migration keyed on `SCHEMA_VERSION`; the file is a cache but people should not have to delete it
+- `sync.py` only ever calls `posts/all` with both `fromdt` and `todt`, and spaces those calls five minutes apart. Keep it that way
+- Tests use `tests/fakes.py` (`FakePinboard`, `FakeEmbedder`, `Clock`) and `tests/fixtures/pinboard_export.json`; nothing sleeps and nothing downloads a model
+- Anything written to the index's `meta` table or returned by `get_index_status` goes through `safe_error`: never a request URL, never the token
+- The semantic extra (`fastembed`, `numpy`) is optional. Import both lazily, inside functions
+- `count_bookmarks` and `get_index_status` have no card (neither card draws counts or status), so they carry no `meta`
 
 ## Virtual Environment
 
