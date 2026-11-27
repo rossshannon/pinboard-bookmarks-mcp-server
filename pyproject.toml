@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pinboard-bookmarks-mcp-server"
-version = "1.0.1"
-description = "Pinboard MCP Server - Read-only access to Pinboard bookmarks for LLMs"
+version = "1.2.0"
+description = "Pinboard MCP Server - Search your Pinboard bookmarks from an LLM, with a local full-text and semantic index"
 authors = [
     {name = "Ross Shannon", email = "ross@andopen.co"}
 ]
@@ -45,6 +45,14 @@ dev = [
     "pre-commit>=3.0.0",
     "build>=1.0.0",
     "twine>=4.0.0",
+    # The vector maths of semantic search, tested against a stand-in model.
+    "numpy>=1.26",
+]
+# Search by meaning: a local embedding model (ONNX, no API key). Optional
+# because it brings onnxruntime and downloads a model of about 70 MB on first use.
+semantic = [
+    "fastembed>=0.9.1",
+    "numpy>=1.26",
 ]
 mcp = [
     "mcp>=1.0.0",
@@ -57,6 +65,7 @@ Issues = "https://github.com/rossshannon/pinboard-bookmarks-mcp-server/issues"
 
 [project.scripts]
 pinboard-mcp-server = "pinboard_mcp_server.main:main"
+pinboard-mcp-index = "pinboard_mcp_server.cli:main"
 
 [tool.uv]
 # 7-day dependency cooldown: refuse package versions published in the last
@@ -116,6 +125,8 @@ module = [
     "vcrpy.*",
     "mcp.*",
     "fastmcp.*",
+    "fastembed.*",
+    "numpy.*",
 ]
 ignore_missing_imports = true
 

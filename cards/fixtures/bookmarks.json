@@ -12,7 +12,9 @@
             "essays"
           ],
           "notes": "Robin Sloan on writing software for an audience of four. The best argument I know for building small, personal tools.",
-          "saved_at": "2026-10-09T21:14:03Z"
+          "saved_at": "2026-10-09T21:14:03Z",
+          "private": false,
+          "to_read": false
         },
         {
           "id": "b001",
@@ -24,7 +26,9 @@
             "ui"
           ],
           "notes": "SEP-1865: ui:// resources, _meta.ui.resourceUri, and the postMessage bridge.",
-          "saved_at": "2026-10-08T07:42:51Z"
+          "saved_at": "2026-10-08T07:42:51Z",
+          "private": false,
+          "to_read": false
         },
         {
           "id": "b002",
@@ -35,7 +39,9 @@
             "work"
           ],
           "notes": "",
-          "saved_at": "2026-10-05T18:03:00Z"
+          "saved_at": "2026-10-05T18:03:00Z",
+          "private": false,
+          "to_read": false
         },
         {
           "id": "b003",
@@ -47,7 +53,9 @@
             ".toread"
           ],
           "notes": "Read the first data release notes before the Dublin astro society talk.",
-          "saved_at": "2026-10-02T11:30:00Z"
+          "saved_at": "2026-10-02T11:30:00Z",
+          "private": false,
+          "to_read": true
         }
       ],
       "total": 4,
@@ -67,7 +75,9 @@
             "essays"
           ],
           "notes": "Robin Sloan on writing software for an audience of four. The best argument I know for building small, personal tools.",
-          "saved_at": "2026-10-09T21:14:03Z"
+          "saved_at": "2026-10-09T21:14:03Z",
+          "private": false,
+          "to_read": false
         },
         {
           "id": "b001",
@@ -79,7 +89,9 @@
             "ui"
           ],
           "notes": "SEP-1865: ui:// resources, _meta.ui.resourceUri, and the postMessage bridge.",
-          "saved_at": "2026-10-08T07:42:51Z"
+          "saved_at": "2026-10-08T07:42:51Z",
+          "private": false,
+          "to_read": false
         },
         {
           "id": "b002",
@@ -90,7 +102,9 @@
             "work"
           ],
           "notes": "",
-          "saved_at": "2026-10-05T18:03:00Z"
+          "saved_at": "2026-10-05T18:03:00Z",
+          "private": false,
+          "to_read": false
         },
         {
           "id": "b003",
@@ -102,7 +116,9 @@
             ".toread"
           ],
           "notes": "Read the first data release notes before the Dublin astro society talk.",
-          "saved_at": "2026-10-02T11:30:00Z"
+          "saved_at": "2026-10-02T11:30:00Z",
+          "private": false,
+          "to_read": true
         },
         {
           "id": "b004",
@@ -113,7 +129,9 @@
             "productivity"
           ],
           "notes": "",
-          "saved_at": "2026-09-28T09:10:00Z"
+          "saved_at": "2026-09-28T09:10:00Z",
+          "private": false,
+          "to_read": false
         }
       ],
       "total": 5,
@@ -134,7 +152,9 @@
             "essays"
           ],
           "notes": "Robin Sloan on writing software for an audience of four. The best argument I know for building small, personal tools.",
-          "saved_at": "2026-10-09T21:14:03Z"
+          "saved_at": "2026-10-09T21:14:03Z",
+          "private": false,
+          "to_read": false
         },
         {
           "id": "b001",
@@ -146,7 +166,9 @@
             "ui"
           ],
           "notes": "SEP-1865: ui:// resources, _meta.ui.resourceUri, and the postMessage bridge.",
-          "saved_at": "2026-10-08T07:42:51Z"
+          "saved_at": "2026-10-08T07:42:51Z",
+          "private": false,
+          "to_read": false
         },
         {
           "id": "b002",
@@ -157,7 +179,9 @@
             "work"
           ],
           "notes": "",
-          "saved_at": "2026-10-05T18:03:00Z"
+          "saved_at": "2026-10-05T18:03:00Z",
+          "private": false,
+          "to_read": false
         }
       ],
       "total": 3,
@@ -177,7 +201,9 @@
             "essays"
           ],
           "notes": "Robin Sloan on writing software for an audience of four. The best argument I know for building small, personal tools.",
-          "saved_at": "2026-10-09T21:14:03Z"
+          "saved_at": "2026-10-09T21:14:03Z",
+          "private": false,
+          "to_read": false
         },
         {
           "id": "b002",
@@ -188,7 +214,9 @@
             "work"
           ],
           "notes": "",
-          "saved_at": "2026-10-05T18:03:00Z"
+          "saved_at": "2026-10-05T18:03:00Z",
+          "private": false,
+          "to_read": false
         },
         {
           "id": "b004",
@@ -199,7 +227,9 @@
             "productivity"
           ],
           "notes": "",
-          "saved_at": "2026-09-28T09:10:00Z"
+          "saved_at": "2026-09-28T09:10:00Z",
+          "private": false,
+          "to_read": false
         }
       ],
       "total": 3,
@@ -223,7 +253,9 @@
             "reference"
           ],
           "notes": "Notes on rust, item 1.",
-          "saved_at": "2026-09-01T12:00:00Z"
+          "saved_at": "2026-09-01T12:00:00Z",
+          "private": false,
+          "to_read": false
         },
         {
           "id": "m001",
@@ -234,7 +266,9 @@
             "reference"
           ],
           "notes": "",
-          "saved_at": "2026-09-02T12:00:00Z"
+          "saved_at": "2026-09-02T12:00:00Z",
+          "private": false,
+          "to_read": false
         },
         {
           "id": "m002",
@@ -245,7 +279,9 @@
             "reference"
           ],
           "notes": "",
-          "saved_at": "2026-09-03T12:00:00Z"
+          "saved_at": "2026-09-03T12:00:00Z",
+          "private": false,
+          "to_read": false
         },
         {
           "id": "m003",
@@ -256,7 +292,9 @@
             "reference"
           ],
           "notes": "Notes on python, item 4.",
-          "saved_at": "2026-09-04T12:00:00Z"
+          "saved_at": "2026-09-04T12:00:00Z",
+          "private": false,
+          "to_read": false
         },
         {
           "id": "m004",
@@ -267,7 +305,9 @@
             "reference"
           ],
           "notes": "",
-          "saved_at": "2026-09-05T12:00:00Z"
+          "saved_at": "2026-09-05T12:00:00Z",
+          "private": false,
+          "to_read": false
         },
         {
           "id": "m005",
@@ -278,7 +318,9 @@
             "reference"
           ],
           "notes": "",
-          "saved_at": "2026-09-06T12:00:00Z"
+          "saved_at": "2026-09-06T12:00:00Z",
+          "private": false,
+          "to_read": false
         },
         {
           "id": "m006",
@@ -289,7 +331,9 @@
             "reference"
           ],
           "notes": "Notes on music, item 7.",
-          "saved_at": "2026-09-07T12:00:00Z"
+          "saved_at": "2026-09-07T12:00:00Z",
+          "private": false,
+          "to_read": false
         },
         {
           "id": "m007",
@@ -300,7 +344,9 @@
             "reference"
           ],
           "notes": "",
-          "saved_at": "2026-09-08T12:00:00Z"
+          "saved_at": "2026-09-08T12:00:00Z",
+          "private": false,
+          "to_read": false
         },
         {
           "id": "m008",
@@ -311,7 +357,9 @@
             "reference"
           ],
           "notes": "",
-          "saved_at": "2026-09-09T12:00:00Z"
+          "saved_at": "2026-09-09T12:00:00Z",
+          "private": false,
+          "to_read": false
         },
         {
           "id": "m009",
@@ -322,7 +370,9 @@
             "reference"
           ],
           "notes": "Notes on macos, item 10.",
-          "saved_at": "2026-09-10T12:00:00Z"
+          "saved_at": "2026-09-10T12:00:00Z",
+          "private": false,
+          "to_read": false
         },
         {
           "id": "m010",
@@ -333,7 +383,9 @@
             "reference"
           ],
           "notes": "",
-          "saved_at": "2026-09-11T12:00:00Z"
+          "saved_at": "2026-09-11T12:00:00Z",
+          "private": false,
+          "to_read": false
         },
         {
           "id": "m011",
@@ -344,7 +396,9 @@
             "reference"
           ],
           "notes": "",
-          "saved_at": "2026-09-12T12:00:00Z"
+          "saved_at": "2026-09-12T12:00:00Z",
+          "private": false,
+          "to_read": false
         },
         {
           "id": "m012",
@@ -355,7 +409,9 @@
             "reference"
           ],
           "notes": "Notes on ruby, item 13.",
-          "saved_at": "2026-09-13T12:00:00Z"
+          "saved_at": "2026-09-13T12:00:00Z",
+          "private": false,
+          "to_read": false
         },
         {
           "id": "m013",
@@ -366,7 +422,9 @@
             "reference"
           ],
           "notes": "",
-          "saved_at": "2026-09-14T12:00:00Z"
+          "saved_at": "2026-09-14T12:00:00Z",
+          "private": false,
+          "to_read": false
         },
         {
           "id": "m014",
@@ -377,7 +435,9 @@
             "reference"
           ],
           "notes": "",
-          "saved_at": "2026-09-15T12:00:00Z"
+          "saved_at": "2026-09-15T12:00:00Z",
+          "private": false,
+          "to_read": false
         },
         {
           "id": "m015",
@@ -388,7 +448,9 @@
             "reference"
           ],
           "notes": "Notes on diy, item 16.",
-          "saved_at": "2026-09-16T12:00:00Z"
+          "saved_at": "2026-09-16T12:00:00Z",
+          "private": false,
+          "to_read": false
         },
         {
           "id": "m016",
@@ -399,7 +461,9 @@
             "reference"
           ],
           "notes": "",
-          "saved_at": "2026-09-17T12:00:00Z"
+          "saved_at": "2026-09-17T12:00:00Z",
+          "private": false,
+          "to_read": false
         },
         {
           "id": "m017",
@@ -410,7 +474,9 @@
             "reference"
           ],
           "notes": "",
-          "saved_at": "2026-09-18T12:00:00Z"
+          "saved_at": "2026-09-18T12:00:00Z",
+          "private": false,
+          "to_read": false
         },
         {
           "id": "m018",
@@ -421,7 +487,9 @@
             "reference"
           ],
           "notes": "Notes on gaming, item 19.",
-          "saved_at": "2026-09-19T12:00:00Z"
+          "saved_at": "2026-09-19T12:00:00Z",
+          "private": false,
+          "to_read": false
         },
         {
           "id": "m019",
@@ -432,7 +500,9 @@
             "reference"
           ],
           "notes": "",
-          "saved_at": "2026-09-20T12:00:00Z"
+          "saved_at": "2026-09-20T12:00:00Z",
+          "private": false,
+          "to_read": false
         },
         {
           "id": "m020",
@@ -443,7 +513,9 @@
             "reference"
           ],
           "notes": "",
-          "saved_at": "2026-09-21T12:00:00Z"
+          "saved_at": "2026-09-21T12:00:00Z",
+          "private": false,
+          "to_read": false
         },
         {
           "id": "m021",
@@ -454,7 +526,9 @@
             "reference"
           ],
           "notes": "Notes on typescript, item 22.",
-          "saved_at": "2026-09-22T12:00:00Z"
+          "saved_at": "2026-09-22T12:00:00Z",
+          "private": false,
+          "to_read": false
         },
         {
           "id": "m022",
@@ -465,7 +539,9 @@
             "reference"
           ],
           "notes": "",
-          "saved_at": "2026-09-23T12:00:00Z"
+          "saved_at": "2026-09-23T12:00:00Z",
+          "private": false,
+          "to_read": false
         }
       ],
       "total": 23,
@@ -495,7 +571,9 @@
             "</li><li>"
           ],
           "notes": "<img src=x onerror=alert(1)><script>alert('x')</script>\n\"quoted\" & <b>bold</b>",
-          "saved_at": "not a date"
+          "saved_at": "not a date",
+          "private": false,
+          "to_read": false
         },
         {
           "id": "h2",
@@ -503,7 +581,9 @@
           "title": "Data URL bookmark",
           "tags": [],
           "notes": "",
-          "saved_at": "2026-10-01T00:00:00Z"
+          "saved_at": "2026-10-01T00:00:00Z",
+          "private": false,
+          "to_read": false
         }
       ],
       "total": 2,
@@ -547,7 +627,9 @@
             "t24"
           ],
           "notes": "A long note paragraph. A long note paragraph. A long note paragraph. A long note paragraph. A long note paragraph. A long note paragraph. A long note paragraph. A long note paragraph. A long note paragraph. A long note paragraph. A long note paragraph. A long note paragraph. A long note paragraph. A long note paragraph. A long note paragraph. A long note paragraph. A long note paragraph. A long note paragraph. A long note paragraph. A long note paragraph. A long note paragraph. A long note paragraph. A long note paragraph. A long note paragraph. A long note paragraph. A long note paragraph. A long note paragraph. A long note paragraph. A long note paragraph. A long note paragraph. \n\nSecond paragraph SupercalifragilisticexpialidociousSupercalifragilisticexpialidociousSupercalifragilisticexpialidociousSupercalifragilisticexpialidociousSupercalifragilisticexpialidociousSupercalifragilisticexpialidocious",
-          "saved_at": "2026-10-11T23:59:59Z"
+          "saved_at": "2026-10-11T23:59:59Z",
+          "private": false,
+          "to_read": false
         }
       ],
       "total": 1,

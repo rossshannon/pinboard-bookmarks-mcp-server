@@ -29,6 +29,9 @@ BOOKMARK_TOOLS = (
     "list_bookmarks_by_tags",
 )
 
+#: Tools whose results are counts or status, which neither card draws.
+CARDLESS_TOOLS = ("count_bookmarks", "get_index_status")
+
 
 @pytest.fixture
 async def mcp_client(mock_client):
@@ -104,8 +107,16 @@ class TestToolBindings:
         uris = {str(resource.uri) for resource in await mcp_client.list_resources()}
 
         for tool in await mcp_client.list_tools():
+            if tool.name in CARDLESS_TOOLS:
+                continue
             assert tool.meta is not None
             assert tool.meta["ui"]["resourceUri"] in uris
+
+    async def test_tools_with_no_fitting_card_point_at_none(self, mcp_client):
+        tools = {tool.name: tool for tool in await mcp_client.list_tools()}
+
+        for name in CARDLESS_TOOLS:
+            assert "ui" not in (tools[name].meta or {})
 
 
 class TestCardResources:
@@ -259,7 +270,7 @@ asyncio.run(go())
         )
         report = json.loads(completed.stdout.strip().splitlines()[-1])
 
-        assert report == {"metas": [None] * 5, "resources": [], "templates": []}
+        assert report == {"metas": [None] * 7, "resources": [], "templates": []}
 
 
 class TestFixtureContract:
