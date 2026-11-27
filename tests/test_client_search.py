@@ -299,6 +299,7 @@ class TestPostsAllAllowance:
 
         assert found == []
         assert client._pb.posts.all.call_count == 1
+        assert client.partial_note.startswith("Incomplete")
 
     async def test_a_partial_answer_is_not_remembered(self, client_for, now):
         client = client_for(self._history(now))
@@ -309,6 +310,31 @@ class TestPostsAllAllowance:
         found = await client.search_bookmarks_extended("numbat", days_back=200)
 
         assert [b.url for b in found] == ["https://older/"]
+        assert client.partial_note is None
+
+    async def test_a_partial_tag_listing_is_flagged_and_not_remembered(
+        self, client_for, now
+    ):
+        posts = self._history(now)
+        posts.append(
+            post(
+                "https://rusty/",
+                "Old rust",
+                tags="rust",
+                time=_stamp(now - timedelta(days=400)),
+            )
+        )
+        client = client_for(posts)
+        await client.get_bookmarks_by_tags(["python"])
+
+        assert await client.get_bookmarks_by_tags(["rust"]) == []
+        assert client.partial_note.startswith("Incomplete")
+
+        client._last_posts_all = None  # five minutes later
+        found = await client.get_bookmarks_by_tags(["rust"])
+
+        assert [b.url for b in found] == ["https://rusty/"]
+        assert client.partial_note is None
 
     async def test_an_error_from_pinboard_does_not_fail_the_search(
         self, client_for, now
@@ -321,16 +347,51 @@ class TestPostsAllAllowance:
         found = await client.search_bookmarks("quokka")
 
         assert [b.url for b in found] == ["https://new/"]
+        # The note names the kind of failure and nothing from its text, which
+        # can hold the request URL.
+        assert "RuntimeError" in client.partial_note
+        assert "429" not in client.partial_note
 
     async def test_nothing_is_called_while_the_index_sync_owns_it(
         self, client_for, now
     ):
         client = client_for(self._history(now))
-        client.posts_all_enabled = False
+        client.posts_all_reserved = lambda: True
 
         assert await client.search_bookmarks("quokka") == []
         assert await client.get_bookmarks_by_tags(["python"]) == []
         client._pb.posts.all.assert_not_called()
+        assert client.partial_note.startswith("Incomplete")
+
+    async def test_the_allowance_is_shared_with_the_sync(self, client_for, now):
+        client = client_for(self._history(now))
+        recorded = []
+        client.posts_all_age = lambda: 60.0  # the sync called it a minute ago
+        client.posts_all_record = lambda: recorded.append(True)
+
+        assert await client.search_bookmarks("quokka") == []
+        client._pb.posts.all.assert_not_called()
+
+        client.posts_all_age = lambda: 400.0
+        found = await client.search_bookmarks("quokka")
+
+        assert [b.url for b in found] == ["https://old/"]
+        assert recorded == [True]
+
+    async def test_a_year_of_recent_bookmarks_reaches_past_the_six_month_cache(
+        self, client_for, now
+    ):
+        posts = self._history(now)
+        posts.append(
+            post("https://last-year/", "Older", time=_stamp(now - timedelta(days=300)))
+        )
+        client = client_for(posts)
+        await client.search_bookmarks("quokka")  # widens the cache to six months
+        client._last_posts_all = None  # five minutes later
+
+        found = await client.get_recent_bookmarks(days=365, limit=200)
+
+        assert "https://last-year/" in [b.url for b in found]
 
     def test_it_is_never_called_without_a_filter(self, client_for):
         client = client_for([])

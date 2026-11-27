@@ -37,10 +37,12 @@ from __future__ import annotations
 import json
 import logging
 import re
+import socket
 import threading
 import time
 import urllib.error
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -71,6 +73,43 @@ FULL_REFRESH_LIMIT = 2_000
 FULL_RESYNC_INTERVAL = timedelta(days=7)
 
 _MAX_BACKOFF = 3600.0
+
+#: A window Pinboard could not serve is halved for the next attempt, down to this.
+MIN_WINDOW = 500
+
+#: Seconds a call may go without a byte from Pinboard. pinboard.py sets no
+#: timeout of its own, and a connection that hangs would hold the sync for ever.
+NETWORK_TIMEOUT = 180.0
+
+_timeout_lock = threading.Lock()
+
+
+@contextmanager
+def _network_timeout(seconds: float) -> Iterator[None]:
+    """Give sockets opened inside the block a timeout, if none is set already.
+
+    The default is process-wide, which is the only handle pinboard.py leaves;
+    it is put back straight after the call.
+    """
+    with _timeout_lock:
+        previous = socket.getdefaulttimeout()
+        if previous is None:
+            socket.setdefaulttimeout(seconds)
+        try:
+            yield
+        finally:
+            socket.setdefaulttimeout(previous)
+
+
+def _too_big(error: Exception) -> bool:
+    """Whether a failed ``posts/all`` looks like a window Pinboard could not serve."""
+    if isinstance(error, urllib.error.HTTPError):
+        return 500 <= error.code < 600
+    if isinstance(error, urllib.error.URLError):
+        return isinstance(error.reason, TimeoutError)
+    return isinstance(error, TimeoutError)
+
+
 _MAX_RATE_LIMIT_RETRIES = 3
 
 _TOKEN = re.compile(r"(auth_token=)[^&\s]+")
@@ -180,6 +219,8 @@ class PinboardSync:
         max_window: int = MAX_WINDOW,
         full_refresh_limit: int = FULL_REFRESH_LIMIT,
         wait_for_windows: bool = True,
+        account: str | None = None,
+        network_timeout: float = NETWORK_TIMEOUT,
     ):
         """
         Args:
@@ -194,6 +235,10 @@ class PinboardSync:
             max_window: the most bookmarks to plan into one window.
             full_refresh_limit: accounts with at most this many bookmarks are
                 re-read whole on any change.
+            account: the Pinboard username being synced. An index that was
+                filled from another account is emptied first, so two accounts
+                never share one file's bookmarks.
+            network_timeout: seconds a call may wait on Pinboard.
             wait_for_windows: ``False`` stops after the windows that can be
                 fetched now rather than waiting out the ``posts/all`` interval.
         """
@@ -206,6 +251,8 @@ class PinboardSync:
         self.posts_all_interval = posts_all_interval
         self.max_window = max_window
         self.full_refresh_limit = min(full_refresh_limit, max_window)
+        self.account = (account or "").strip().lower() or None
+        self.network_timeout = network_timeout
         self.wait_for_windows = wait_for_windows
         self._lock = threading.Lock()
 
@@ -228,7 +275,8 @@ class PinboardSync:
 
     def _call(self, func: Callable[[], Any]) -> Any:
         self._rate_limit()
-        return func()
+        with _network_timeout(self.network_timeout):
+            return func()
 
     def _await_posts_all_slot(self) -> None:
         """Wait until ``posts/all`` may be called again. The last call's time is
@@ -244,7 +292,9 @@ class PinboardSync:
         logger.info("Waiting %.0f s before the next posts/all call", remaining)
         self._pause(remaining)
 
-    def _fetch_window(self, since: str, until: str) -> list[Any]:
+    def _fetch_window(self, since: str, until: str, expected: int = 0) -> list[Any]:
+        """One date-bounded ``posts/all``. ``expected`` is how many bookmarks
+        ``posts/dates`` says the window holds."""
         backoff = max(self.posts_all_interval, 1.0)
         for attempt in range(_MAX_RATE_LIMIT_RETRIES + 1):
             self._await_posts_all_slot()
@@ -262,7 +312,15 @@ class PinboardSync:
                 self._pause(backoff)
                 backoff = min(backoff * 2, _MAX_BACKOFF)
                 continue
-            return posts if isinstance(posts, list) else []
+            # What comes back replaces what the index holds for the window, so
+            # an answer that cannot be right must not be taken for "nothing here".
+            if not isinstance(posts, list):
+                raise RuntimeError("Pinboard did not return a list of bookmarks")
+            if not posts and expected > 0:
+                raise RuntimeError(
+                    f"Pinboard returned no bookmarks for a window holding {expected}"
+                )
+            return posts
         return []
 
     # -- the sync ----------------------------------------------------------
@@ -283,8 +341,26 @@ class PinboardSync:
             self.index.set_meta("last_error", report.error)
             return report
 
+    def _claim_index(self) -> None:
+        """Make sure the index holds this account's bookmarks and no other's."""
+        if self.account is None:
+            return
+        known = self.index.get_meta("account")
+        if known is not None and known != self.account:
+            logger.warning(
+                "The index was synced from another Pinboard account; starting it again"
+            )
+            self.index.reset()
+        if known != self.account:
+            self.index.set_meta("account", self.account)
+
+    def _window_limit(self) -> int:
+        learned = _int(self.index.get_meta("window_limit"))
+        return min(self.max_window, learned) if learned else self.max_window
+
     def _sync(self, full: bool, report: SyncReport) -> None:
         index = self.index
+        self._claim_index()
         update = self._call(lambda: self._pb.posts.update())
         update_time = (
             enrich.format_utc(update) if hasattr(update, "isoformat") else str(update)
@@ -366,18 +442,33 @@ class PinboardSync:
         if full_pass:
             changed |= index.day_counts().keys() - remote.keys()
 
-        windows = plan_windows(remote, changed, self.max_window)
+        windows = plan_windows(remote, changed, self._window_limit())
         report.windows_planned = len(windows)
         covers_everything = full_pass or (bool(remote) and changed >= set(remote))
         if windows:
             index.set_meta("sync_incomplete", "1")
+        if index.get_meta("pass_update_time") is None:
+            # Pinboard's change time as this pass began. A pass can take
+            # several runs, and an edit made between them to a window already
+            # read would otherwise go unseen: the pass finishes by recording
+            # this time, not the latest, so the next sync notices the change.
+            index.set_meta("pass_update_time", update_time)
 
         for window in windows:
             # A day's margin either side, in case Pinboard buckets a day's
             # bookmarks in a timezone other than UTC.
             since = _midnight(window.first - timedelta(days=1))
             until = _midnight(window.last + timedelta(days=2))
-            posts = self._fetch_window(since, until)
+            try:
+                posts = self._fetch_window(since, until, window.count)
+            except Exception as error:
+                if _too_big(error) and window.count > MIN_WINDOW:
+                    # Ask for half as much next time instead of repeating a
+                    # request Pinboard cannot serve.
+                    index.set_meta(
+                        "window_limit", str(max(window.count // 2, MIN_WINDOW))
+                    )
+                raise
             report.delta += index.replace_range(
                 since, until, (Post.from_pinboard(post) for post in posts)
             )
@@ -397,7 +488,10 @@ class PinboardSync:
 
         now = enrich.format_utc(self._clock())
         index.set_meta("sync_incomplete", None)
-        index.set_meta("last_update_time", update_time)
+        index.set_meta(
+            "last_update_time", index.get_meta("pass_update_time") or update_time
+        )
+        index.set_meta("pass_update_time", None)
         index.set_meta("last_synced_at", now)
         index.set_meta("remote_total", str(report.remote_total))
         if covers_everything:
@@ -411,6 +505,7 @@ class PinboardSync:
 
     def _begin_full_pass(self) -> None:
         self.index.set_meta("full_sync_pending", "1")
+        self.index.set_meta("pass_update_time", None)
         self.index.set_json("synced_dates", {})
 
 

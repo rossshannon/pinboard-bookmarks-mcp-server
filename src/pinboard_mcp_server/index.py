@@ -273,7 +273,9 @@ _SOURCE_ALIASES = {
     "tweets": enrich.SOURCE_TWITTER,
 }
 
-_WORD = re.compile(r"\w", re.UNICODE)
+#: A letter or a digit. Not ``\w``: that takes an underscore, which the FTS5
+#: tokenizer drops, and a term of nothing else can never match.
+_WORD = re.compile(r"[^\W_]", re.UNICODE)
 _QUERY_PART = re.compile(r'"([^"]*)"|(\S+)')
 
 
@@ -588,6 +590,19 @@ class BookmarkIndex:
             ]
             delta.deleted += self._delete_ids(db, stale)
         return delta
+
+    def reset(self) -> None:
+        """Empty the index: every bookmark, and everything recorded about syncing.
+
+        The schema, the pacing of ``posts/all`` and the embedding revision stay.
+        """
+        with self._writing() as db:
+            db.execute("DELETE FROM bookmarks")
+            db.execute(
+                "DELETE FROM meta WHERE key NOT IN "
+                "('schema_version', 'derived_version', 'embeddings_revision', "
+                "'last_posts_all_at')"
+            )
 
     def delete_urls(self, urls: Iterable[str]) -> int:
         with self._writing() as db:

@@ -184,7 +184,7 @@ The server enforces Pinboard's limits: three seconds between API calls, and five
 
 ### Without the index
 
-With `PINBOARD_INDEX=off`, or before the first sync has fetched anything, the tools ask Pinboard directly: the most recent 100 bookmarks, widening to six months when those do not fill the page. Every word of the query must appear (in any order) in the title, notes, tags or URL. The `author`, `domain`, `tags`, `source` and `offset` arguments and `count_bookmarks` need the index. Answers are remembered for five minutes and dropped as soon as Pinboard reports a change. Pinboard allows the wider (`posts/all`) request once every five minutes, so a search that would need a second one sooner answers from what it already has; while the index is syncing that allowance belongs to the sync, and these tools read the most recent 100 only.
+With `PINBOARD_INDEX=off`, or before the first sync has fetched anything, the tools ask Pinboard directly: the most recent 100 bookmarks, widening to six months when those do not fill the page. Every word of the query must appear (in any order) in the title, notes, tags or URL. The `author`, `domain`, `tags`, `source` and `offset` arguments and `count_bookmarks` need the index. Answers are remembered for five minutes and dropped as soon as Pinboard reports a change. Pinboard allows the wider (`posts/all`) request once every five minutes, so a search that would need a second one sooner answers from what it already has and says so in a `note` (an incomplete answer is not remembered). While the index's first sync is under way that allowance belongs to the sync, and these results carry the index's status.
 
 ## Testing
 

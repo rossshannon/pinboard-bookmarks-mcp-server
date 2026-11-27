@@ -341,7 +341,8 @@ class TestWithoutTheIndex:
             live, "search_bookmarks", query="python", from_date="2026-01-01"
         )
 
-        assert set(result) == {"bookmarks", "total", "query"}
+        assert set(result) == {"bookmarks", "total", "query", "index"}
+        assert "still running" in result["index"]["note"]
         kwargs = mock_client.search_bookmarks.call_args.kwargs
         assert kwargs["query"] == "python"
         assert kwargs["from_date"] == datetime(2026, 1, 1)
@@ -358,12 +359,29 @@ class TestWithoutTheIndex:
         [
             {"query": "x", "author": "patrickc"},
             {"query": "x", "offset": 5},
+            {"query": "x", "date_field": "posted"},
+            {"query": "x", "mode": "semantic"},
             {"query": ""},
         ],
     )
     async def test_index_only_arguments_say_what_is_missing(self, live, arguments):
         with pytest.raises(ToolError, match="index"):
             await live.call_tool("search_bookmarks", arguments)
+
+    async def test_an_incomplete_answer_says_so(self, live, mock_client):
+        mock_client.partial_note = "Incomplete: older bookmarks may be missing."
+
+        result = await call(live, "search_bookmarks", query="python")
+
+        assert result["note"].startswith("Incomplete")
+
+    async def test_a_bare_to_date_covers_its_day_for_tags_too(self, live, mock_client):
+        await call(
+            live, "list_bookmarks_by_tags", tags=["python"], to_date="2026-01-31"
+        )
+
+        kwargs = mock_client.get_bookmarks_by_tags.call_args.kwargs
+        assert kwargs["to_date"] == datetime(2026, 1, 31, 23, 59, 59)
 
     async def test_count_needs_the_index(self, live):
         with pytest.raises(ToolError, match="index"):
@@ -418,8 +436,9 @@ class TestConfiguration:
         service = main._open_index(token_client)
         try:
             assert service is not None
-            # The sync has posts/all to itself.
-            assert token_client.posts_all_enabled is False
+            # The fallback shares posts/all with the sync.
+            assert token_client.posts_all_reserved == service.sync_needs_posts_all
+            assert token_client.posts_all_record == service.record_posts_all
             for _ in range(200):
                 if service.ready() and service.index.get_meta("last_synced_at"):
                     break

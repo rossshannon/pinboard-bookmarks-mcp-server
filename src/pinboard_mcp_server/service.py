@@ -79,13 +79,14 @@ class IndexService:
         pinboard_client: Any = None,
         rate_limit: Any = None,
         environ: dict[str, str] | os._Environ[str] | None = None,
+        account: str | None = None,
     ) -> IndexService:
         """Open the configured index. ``pinboard_client`` is the ``pinboard.Pinboard``
         to sync from; without one the index is read-only."""
         env = environ if environ is not None else os.environ
         index = BookmarkIndex(default_index_path(env))
         syncer = (
-            PinboardSync(pinboard_client, index, rate_limit=rate_limit)
+            PinboardSync(pinboard_client, index, rate_limit=rate_limit, account=account)
             if pinboard_client is not None
             else None
         )
@@ -112,6 +113,34 @@ class IndexService:
             return False
 
     # -- shaping -----------------------------------------------------------
+
+    # -- the posts/all allowance, shared with the live fallback -------------
+
+    def sync_needs_posts_all(self) -> bool:
+        """Whether a sync is under way and should have ``posts/all`` to itself.
+
+        Not once a sync has failed: then the fallback may as well try, since
+        the next attempt is minutes away and will wait its turn.
+        """
+        if self.syncer is None or not self.worker.is_alive():
+            return False
+        status = sync_status(self.index)
+        return not status["complete"] and not status["last_error"]
+
+    def posts_all_age(self) -> float | None:
+        """Seconds since anyone last called ``posts/all``, if known."""
+        last = enrich.parse_utc(self.index.get_meta("last_posts_all_at") or "")
+        if last is None:
+            return None
+        return (datetime.now(timezone.utc) - last).total_seconds()
+
+    def record_posts_all(self) -> None:
+        self.index.set_meta(
+            "last_posts_all_at", enrich.format_utc(datetime.now(timezone.utc))
+        )
+
+    def brief_status(self) -> dict[str, Any]:
+        return self._brief_status()
 
     def _brief_status(self) -> dict[str, Any]:
         status = sync_status(self.index)

@@ -649,3 +649,11 @@ class TestFastEmbedWrapper:
 
         with pytest.raises(RuntimeError, match="wrong number"):
             embed_pending(loaded, embedder)
+
+
+def test_a_term_of_punctuation_alone_is_not_a_term():
+    """FTS5 drops underscores as it does other punctuation; such a term could never match."""
+    from pinboard_mcp_server.index import query_terms
+
+    assert query_terms("feedback _ __ -- tool") == ['"feedback"', '"tool"']
+    assert query_terms("snake_case") == ['"snake_case"']

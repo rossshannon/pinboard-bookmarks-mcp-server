@@ -9,6 +9,7 @@ import asyncio
 import re
 import threading
 import time
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -106,9 +107,18 @@ class PinboardClient:
         # cannot wait that long, so a call that comes too soon is refused and
         # the caller answers with what it already has. While the index is
         # syncing in the background the allowance is the sync's alone.
-        self.posts_all_enabled = True
         self.posts_all_interval = POSTS_ALL_INTERVAL
         self._last_posts_all: float | None = None
+        # Set when a background index sync shares the allowance: whether the
+        # sync needs it now, how long ago anyone last used it, and how to
+        # record a use so the sync waits its turn.
+        self.posts_all_reserved: Callable[[], bool] | None = None
+        self.posts_all_age: Callable[[], float | None] | None = None
+        self.posts_all_record: Callable[[], None] | None = None
+
+        # Why the last answer may be incomplete, or None. Read straight after
+        # the call that produced the answer.
+        self.partial_note: str | None = None
 
         # Initialize pinboard.py client
         self._pb = pinboard.Pinboard(token)
@@ -175,17 +185,36 @@ class PinboardClient:
         if not params:
             raise ValueError("posts/all is never called without a filter")
         with self._rate_lock:
-            if not self.posts_all_enabled:
+            if self.posts_all_reserved is not None and self.posts_all_reserved():
                 raise PostsAllUnavailable("the index sync is using posts/all")
             now = time.monotonic()
-            if (
-                self._last_posts_all is not None
-                and now - self._last_posts_all < self.posts_all_interval
-            ):
+            ages = [
+                now - self._last_posts_all
+                if self._last_posts_all is not None
+                else None,
+                self.posts_all_age() if self.posts_all_age is not None else None,
+            ]
+            if any(age is not None and age < self.posts_all_interval for age in ages):
                 raise PostsAllUnavailable("posts/all was called too recently")
             self._last_posts_all = now
+            if self.posts_all_record is not None:
+                self.posts_all_record()
         self._rate_limit_sync()
         return self._pb.posts.all(**params)
+
+    @staticmethod
+    def _why_partial(error: Exception) -> str:
+        """A note for the caller. Never the error's own text: it can hold the request URL."""
+        if isinstance(error, PostsAllUnavailable):
+            return (
+                "Incomplete: Pinboard allows a lookup beyond the most recent 100 "
+                "bookmarks once every five minutes, and that allowance is in use. "
+                "Older bookmarks may be missing; ask again in a few minutes."
+            )
+        return (
+            f"Incomplete: Pinboard could not be asked for older bookmarks "
+            f"({type(error).__name__}), so some may be missing."
+        )
 
     async def _run_in_executor(self, func, *args, **kwargs) -> Any:
         """Run a synchronous function in the thread pool."""
@@ -377,14 +406,15 @@ class PinboardClient:
         await self._check_cache_validity()
         cache_key = f"search:{query}:{limit}:{from_date}:{to_date}"
         if cache_key in self._query_cache:
+            self.partial_note = None
             return self._query_cache[cache_key]
+        note: str | None = None
 
         terms = query_terms(query)
 
         # First try with recent bookmarks
         bookmarks = await self.get_all_bookmarks()
         matches = self._filter(bookmarks, terms, from_date, to_date)
-        complete = True
 
         if len(matches) < limit:
             # If the query is exactly a tag, Pinboard can return every bookmark
@@ -399,17 +429,17 @@ class PinboardClient:
                     await self._search_by_tag_direct(
                         exact_tag_match, matches, from_date, to_date, limit
                     )
-                except Exception:
-                    complete = False  # fall through to the expanded search
+                except Exception as error:
+                    note = self._why_partial(error)  # and try the expanded search
 
             # The recent 100 did not fill the page: look through six months.
             if len(matches) < limit and not self._has_expanded_data:
                 try:
                     bookmarks = await self.get_all_bookmarks(expand_if_needed=True)
-                except Exception:
+                except Exception as error:
                     # Pinboard refused or it is too soon to ask again: answer
                     # with what the recent bookmarks gave.
-                    complete = False
+                    note = self._why_partial(error)
                 else:
                     seen = {bookmark.url for bookmark in matches}
                     matches.extend(
@@ -424,8 +454,9 @@ class PinboardClient:
         matches = matches[:limit]
 
         # A partial answer is not remembered: the next ask may do better.
-        if complete:
+        if note is None:
             self._query_cache[cache_key] = matches
+        self.partial_note = note
         return matches
 
     async def search_bookmarks_extended(
@@ -446,7 +477,9 @@ class PinboardClient:
         await self._check_cache_validity()
         cache_key = f"extended_search:{query}:{days_back}:{limit}"
         if cache_key in self._query_cache:
+            self.partial_note = None
             return self._query_cache[cache_key]
+        note: str | None = None
 
         query_lower = query.strip().lower()
         terms = query_terms(query)
@@ -458,15 +491,14 @@ class PinboardClient:
         )
 
         matches: list[Bookmark] = []
-        complete = True
         if exact_tag_match:
             # Use efficient tag-based search for exact matches
             try:
                 await self._search_by_tag_direct(
                     exact_tag_match, matches, None, None, limit
                 )
-            except Exception:
-                complete = False
+            except Exception as error:
+                note = self._why_partial(error)
 
         # If no tag match or tag search failed, do extended time-based search
         if not matches:
@@ -478,21 +510,22 @@ class PinboardClient:
             try:
                 result: Any = await self._run_in_executor(_get_extended_posts)
                 matches = self._filter(self._to_bookmarks(result), terms, None, None)
-                complete = True
-            except Exception:
+                note = None
+            except Exception as error:
                 # Pinboard refused or it is too soon to ask again: answer from
                 # the bookmarks already held.
+                note = self._why_partial(error)
                 held = await self.get_all_bookmarks()
                 matches = self._filter(held, terms, cutoff, None)
-                complete = False
 
         # Sort by most recent first
         matches.sort(key=_saved, reverse=True)
         matches = matches[:limit]
 
         # A partial answer is not remembered: the next ask may do better.
-        if complete:
+        if note is None:
             self._query_cache[cache_key] = matches
+        self.partial_note = note
         return matches
 
     async def get_recent_bookmarks(
@@ -504,15 +537,18 @@ class PinboardClient:
         await self._check_cache_validity()
         cache_key = f"recent:{days}:{limit}"
         if cache_key in self._query_cache:
+            self.partial_note = None
             return self._query_cache[cache_key]
+        note: str | None = None
 
         bookmarks = await self.get_all_bookmarks()
         cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
 
-        # posts/recent stops at 100. When all 100 are inside the window there
-        # may be more behind them, so read the window itself.
+        # posts/recent stops at 100, and the widened cache at six months. When
+        # everything held is inside the window there may be more behind it, so
+        # read the window itself.
         if (
-            not self._has_expanded_data
+            (not self._has_expanded_data or days > EXPANDED_DAYS)
             and len(bookmarks) >= 100
             and all(_saved(bookmark) >= cutoff_date for bookmark in bookmarks)
         ):
@@ -522,7 +558,8 @@ class PinboardClient:
 
             try:
                 window = self._to_bookmarks(await self._run_in_executor(_get_window))
-            except Exception:
+            except Exception as error:
+                note = self._why_partial(error)
                 window = []
             if len(window) > len(bookmarks):
                 bookmarks = window
@@ -531,8 +568,12 @@ class PinboardClient:
         recent = [bookmark for bookmark in bookmarks if _saved(bookmark) >= cutoff_date]
         recent.sort(key=_saved, reverse=True)
 
+        if len(recent) >= limit:
+            note = None  # the newest are all here; only older ones are missing
         result = recent[:limit]
-        self._query_cache[cache_key] = result
+        if note is None:
+            self._query_cache[cache_key] = result
+        self.partial_note = note
         return result
 
     async def get_bookmarks_by_tags(
@@ -548,7 +589,9 @@ class PinboardClient:
         await self._check_cache_validity()
         cache_key = f"tags:{':'.join(sorted(tags))}:{from_date}:{to_date}:{limit}"
         if cache_key in self._query_cache:
+            self.partial_note = None
             return self._query_cache[cache_key]
+        note: str | None = None
 
         # First try with recent bookmarks
         bookmarks = await self.get_all_bookmarks()
@@ -573,14 +616,15 @@ class PinboardClient:
                 await self._search_by_tag_direct(
                     " ".join(tags), matches, from_date, to_date, limit
                 )
-            except Exception:
-                # If tag search fails, there's likely no bookmarks with that tag
-                pass
+            except Exception as error:
+                note = self._why_partial(error)
 
         # Sort by most recent first
         matches.sort(key=_saved, reverse=True)
 
-        self._query_cache[cache_key] = matches
+        if note is None:
+            self._query_cache[cache_key] = matches
+        self.partial_note = note
         return matches
 
     async def close(self) -> None:

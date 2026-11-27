@@ -123,7 +123,10 @@ def main(argv: list[str] | None = None) -> int:
         import pinboard  # type: ignore
 
         syncer = PinboardSync(
-            pinboard.Pinboard(token), index, wait_for_windows=not args.no_wait
+            pinboard.Pinboard(token),
+            index,
+            wait_for_windows=not args.no_wait,
+            account=token.split(":", 1)[0],
         )
         report = syncer.sync(full=args.full)
         _print(report.as_dict())

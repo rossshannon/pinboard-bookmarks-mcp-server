@@ -118,6 +118,24 @@ days along with the days whose counts changed, and a full pass is scheduled, at
 most once a week, to pick up edits to older bookmarks.
 `pinboard-mcp-index sync --full` forces one.
 
+**When Pinboard misbehaves.** A window's answer replaces what the index holds
+for those dates, so an answer that cannot be right is refused: something other
+than a list, or an empty list for a window `posts/dates` says holds bookmarks,
+fails the pass and deletes nothing. A window Pinboard cannot serve (an HTTP 5xx
+or a timeout) is asked for at half the size next time, down to 500 bookmarks,
+and the smaller size is remembered. pinboard.py sets no network timeout, so the
+sync gives each call 180 seconds without a byte before giving up.
+
+**A pass that takes several runs.** Pinboard's change time is recorded as the
+pass begins and stored when it ends. An edit made part-way through, to a window
+already read, therefore shows up as a change at the next sync instead of being
+lost.
+
+**One account per file.** The index records the Pinboard username it was synced
+from (the name only, never the token). Pointed at another account it empties
+itself and starts again, so one account's private bookmarks are never served as
+another's.
+
 The MCP server runs this in a daemon thread: once at start, then every five
 minutes (`PINBOARD_INDEX_SYNC_INTERVAL`), then embeds anything new.
 `get_index_status(refresh=true)` asks for a pass now.

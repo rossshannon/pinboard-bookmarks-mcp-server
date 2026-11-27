@@ -37,6 +37,25 @@ def _index() -> IndexService | None:
     return None
 
 
+def _fallback(result: dict[str, Any]) -> dict[str, Any]:
+    """A result from the live fallback, with anything the caller should know
+    about how complete it is."""
+    note = getattr(client, "partial_note", None)
+    if isinstance(note, str) and note:
+        result["note"] = note
+    if index_service is not None:
+        # The index is on but has nothing to answer from yet.
+        result["index"] = index_service.brief_status()
+    return result
+
+
+def _end_of_day(moment: datetime | None, stated: str | None) -> datetime | None:
+    """A bare date as an upper bound means the whole of that day."""
+    if moment is not None and stated is not None and len(stated.strip()) <= 10:
+        return moment.replace(hour=23, minute=59, second=59)
+    return moment
+
+
 def _parse_date(value: str | None, name: str) -> datetime | None:
     if not value:
         return None
@@ -113,18 +132,24 @@ async def search_bookmarks(
         )
         return await index.search(query, filters, mode=mode, limit=limit, offset=offset)
 
-    if any([author, domain, tags, source]) or offset:
+    if (
+        any([author, domain, tags, source])
+        or offset
+        or date_field != "saved"
+        or mode in {"semantic", "hybrid"}
+    ):
         raise ValueError(
-            "The author, domain, tags, source and offset filters need the local "
-            "bookmark index, which is switched off or has not synced yet. Call "
-            "get_index_status for details, or put those words in the query."
+            "The author, domain, tags, source, offset, date_field and mode "
+            "arguments need the local bookmark index, which is switched off or "
+            "has not synced yet. Call get_index_status for details, or put "
+            "those words in the query."
         )
+    if mode not in {"auto", "keyword"}:
+        raise ValueError("mode must be auto, keyword, semantic or hybrid")
     if not query.strip():
         raise ValueError("A query is required while the local index is unavailable")
 
-    to_dt = _parse_date(to_date, "to_date")
-    if to_dt is not None and to_date is not None and len(to_date.strip()) <= 10:
-        to_dt = to_dt.replace(hour=23, minute=59, second=59)
+    to_dt = _end_of_day(_parse_date(to_date, "to_date"), to_date)
     bookmarks = await client.search_bookmarks(
         query=query,
         limit=limit,
@@ -132,11 +157,13 @@ async def search_bookmarks(
         to_date=to_dt,
     )
 
-    return {
-        "bookmarks": [bookmark.model_dump() for bookmark in bookmarks],
-        "total": len(bookmarks),
-        "query": query,
-    }
+    return _fallback(
+        {
+            "bookmarks": [bookmark.model_dump() for bookmark in bookmarks],
+            "total": len(bookmarks),
+            "query": query,
+        }
+    )
 
 
 @mcp.tool(meta=ui.tool_meta(ui.BOOKMARKS_CARD))
@@ -168,12 +195,14 @@ async def search_bookmarks_extended(
         query=query, days_back=days_back, limit=limit
     )
 
-    return {
-        "bookmarks": [bookmark.model_dump() for bookmark in bookmarks],
-        "total": len(bookmarks),
-        "query": query,
-        "days_back": days_back,
-    }
+    return _fallback(
+        {
+            "bookmarks": [bookmark.model_dump() for bookmark in bookmarks],
+            "total": len(bookmarks),
+            "query": query,
+            "days_back": days_back,
+        }
+    )
 
 
 @mcp.tool(meta=ui.tool_meta(ui.BOOKMARKS_CARD))
@@ -199,11 +228,13 @@ async def list_recent_bookmarks(days: int = 7, limit: int = 20) -> dict[str, Any
 
     bookmarks = await client.get_recent_bookmarks(days=days, limit=limit)
 
-    return {
-        "bookmarks": [bookmark.model_dump() for bookmark in bookmarks],
-        "total": len(bookmarks),
-        "days": days,
-    }
+    return _fallback(
+        {
+            "bookmarks": [bookmark.model_dump() for bookmark in bookmarks],
+            "total": len(bookmarks),
+            "days": days,
+        }
+    )
 
 
 @mcp.tool(meta=ui.tool_meta(ui.BOOKMARKS_CARD))
@@ -231,19 +262,21 @@ async def list_bookmarks_by_tags(
         return await index.by_tags(tags, from_date, to_date, limit)
 
     from_dt = _parse_date(from_date, "from_date")
-    to_dt = _parse_date(to_date, "to_date")
+    to_dt = _end_of_day(_parse_date(to_date, "to_date"), to_date)
 
     bookmarks = await client.get_bookmarks_by_tags(
         tags=tags, from_date=from_dt, to_date=to_dt, limit=limit
     )
 
-    return {
-        "bookmarks": [bookmark.model_dump() for bookmark in bookmarks],
-        "total": len(bookmarks),
-        "tags": tags,
-        "from_date": from_date,
-        "to_date": to_date,
-    }
+    return _fallback(
+        {
+            "bookmarks": [bookmark.model_dump() for bookmark in bookmarks],
+            "total": len(bookmarks),
+            "tags": tags,
+            "from_date": from_date,
+            "to_date": to_date,
+        }
+    )
 
 
 @mcp.tool(meta=ui.tool_meta(ui.TAGS_CARD))
@@ -346,6 +379,7 @@ def _open_index(token_client: PinboardClient) -> IndexService | None:
         service = IndexService.from_environment(
             pinboard_client=token_client.pinboard,
             rate_limit=token_client._rate_limit_sync,
+            account=str(getattr(token_client, "token", "")).split(":", 1)[0] or None,
         )
     except Exception as error:
         # The index is an accelerator: without it the server still works.
@@ -355,10 +389,13 @@ def _open_index(token_client: PinboardClient) -> IndexService | None:
             file=sys.stderr,
         )
         return None
-    # posts/all is allowed once every five minutes. The sync needs that
-    # allowance; the live fallback (used until the index has data) keeps to
-    # posts/recent meanwhile.
-    token_client.posts_all_enabled = False
+    # posts/all is allowed once every five minutes, and the sync and the live
+    # fallback (used until the index has data) share that allowance: the
+    # fallback leaves it alone while a sync is under way, and records its own
+    # calls where the sync will see them.
+    token_client.posts_all_reserved = service.sync_needs_posts_all
+    token_client.posts_all_age = service.posts_all_age
+    token_client.posts_all_record = service.record_posts_all
     service.start()
     return service
 

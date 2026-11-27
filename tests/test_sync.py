@@ -35,9 +35,14 @@ def account() -> FakePinboard:
     return FakePinboard(export_posts())
 
 
-def syncer(account, index, clock, **options) -> PinboardSync:
+def syncer(pinboard, index, clock, **options) -> PinboardSync:
     return PinboardSync(
-        account, index, rate_limit=lambda: None, wait=clock.wait, clock=clock, **options
+        pinboard,
+        index,
+        rate_limit=lambda: None,
+        wait=clock.wait,
+        clock=clock,
+        **options,
     )
 
 
@@ -557,3 +562,137 @@ class TestInterruptedFullPass:
         sync.sync()
         assert index.get("https://stray/") is None
         assert index.get_meta("needs_full_sync") is None
+
+
+class TestEditsDuringAnInterruptedSync:
+    def test_an_edit_to_a_window_already_read_is_fetched_afterwards(
+        self, account, index, clock
+    ):
+        sync = syncer(account, index, clock, max_window=8, wait_for_windows=False)
+        sync.sync()  # reads the newest window, then stops
+        newest = index.listing(Filters(), 1).bookmarks[0]["url"]
+        account.edit(newest, description="Edited between runs")
+
+        while not sync_status(index)["complete"]:
+            later(clock)
+            sync.sync()
+        assert index.get(newest)["title"] != "Edited between runs"
+
+        # The pass recorded Pinboard's change time as it began, so the next
+        # sync sees that something moved and re-reads recent days.
+        later(clock)
+        report = sync.sync()
+        while not sync_status(index)["complete"]:
+            later(clock)
+            sync.sync()
+
+        assert not report.up_to_date
+        assert index.get(newest)["title"] == "Edited between runs"
+
+
+class TestOneIndexOneAccount:
+    def test_another_account_starts_the_index_again(self, index, clock):
+        mine = FakePinboard(export_posts())
+        syncer(mine, index, clock, account="ross").sync()
+        theirs = FakePinboard(
+            [
+                {**entry, "href": entry["href"] + "?theirs", "description": "Theirs"}
+                for entry in export_posts()
+            ]
+        )
+        later(clock)
+
+        report = syncer(theirs, index, clock, account="someone-else").sync()
+
+        assert report.complete
+        assert index.count() == 23
+        assert all(
+            b["title"] == "Theirs" for b in index.listing(Filters(), 100).bookmarks
+        )
+        assert index.get_meta("account") == "someone-else"
+
+    def test_the_same_account_keeps_its_index(self, account, index, clock):
+        syncer(account, index, clock, account="Ross").sync()
+        account.calls.clear()
+        later(clock)
+
+        report = syncer(account, index, clock, account="ross").sync()
+
+        assert report.up_to_date
+        assert index.count() == 23
+
+    def test_an_index_seeded_from_an_export_is_adopted(self, account, index, clock):
+        import_export(index, EXPORT)
+
+        syncer(account, index, clock, account="ross").sync()
+
+        assert index.count() == 23
+        assert account.count("all") == 0
+        assert index.get_meta("account") == "ross"
+
+
+class TestAnswersThatCannotBeRight:
+    @pytest.fixture
+    def synced(self, account, index, clock) -> PinboardSync:
+        sync = syncer(account, index, clock)
+        sync.sync()
+        later(clock)
+        return sync
+
+    @pytest.mark.parametrize("answer", [[], {"posts": []}, None])
+    def test_an_empty_or_malformed_window_deletes_nothing(
+        self, synced, account, index, answer
+    ):
+        account.add(post("https://new/", time="2026-11-27T09:00:00Z"))
+        account.posts.all = lambda **params: answer
+
+        report = synced.sync()
+
+        assert report.error
+        assert index.count() == 23
+        assert sync_status(index)["complete"] is False
+
+    def test_a_window_pinboard_cannot_serve_is_halved_next_time(self, index, clock):
+        posts = [
+            post(
+                f"https://example.com/{n}",
+                time=f"2026-{1 + n % 12:02d}-{1 + n % 28:02d}T10:00:00Z",
+            )
+            for n in range(1200)
+        ]
+        account = FakePinboard(posts)
+        account.fail_all_with = [500]
+        sync = syncer(account, index, clock)
+
+        first = sync.sync()
+        later(clock)
+        second = sync.sync()
+
+        assert "500" in first.error
+        assert index.get_meta("window_limit") == "600"
+        assert second.complete and second.windows_planned > 1
+        assert index.count() == 1200
+
+    def test_a_refusal_does_not_shrink_the_window(self, account, index, clock):
+        account.fail_all_with = [401]
+
+        syncer(account, index, clock).sync()
+
+        assert index.get_meta("window_limit") is None
+
+    def test_a_call_that_hangs_times_out(self, account, index, clock):
+        import socket
+
+        seen = []
+        real_update = account.posts.update
+
+        def update():
+            seen.append(socket.getdefaulttimeout())
+            return real_update()
+
+        account.posts.update = update
+
+        syncer(account, index, clock, network_timeout=42).sync()
+
+        assert seen == [42]
+        assert socket.getdefaulttimeout() is None
